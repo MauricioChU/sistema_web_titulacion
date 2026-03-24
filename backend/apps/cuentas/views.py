@@ -1,0 +1,11 @@
+from rest_framework.viewsets import ModelViewSet
+from .models import Cuenta
+from .serializers import CuentaSerializer
+
+
+class CuentaViewSet(ModelViewSet):
+    queryset = Cuenta.objects.select_related("cliente").all()
+    serializer_class = CuentaSerializer
+    filterset_fields = ["cliente", "tipo", "activa"]
+    search_fields = ["nombre", "numero", "cliente__nombre"]
+    ordering_fields = ["nombre", "created_at"]

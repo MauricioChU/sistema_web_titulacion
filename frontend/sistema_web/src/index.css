@@ -1,0 +1,12 @@
+@import 'tailwindcss';
+
+body {
+  margin: 0;
+  color: #fff;
+  font-family: Manrope, 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background-image: radial-gradient(circle at 80% -20%, #17365a, transparent 40%), linear-gradient(to bottom, #020917, #101725);
+}
+
+* {
+  box-sizing: border-box;
+}
