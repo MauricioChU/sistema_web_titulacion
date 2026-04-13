@@ -29,124 +29,117 @@
       <header class="crud-head card">
         <div>
           <h2>Cuentas / Clientes</h2>
-          <p>Primero administras clientes, luego cuentas por cliente.</p>
+          <p>Gestiona clientes por secciones y sus cuentas en tarjetas.</p>
         </div>
         <button class="btn ghost" @click="goBack">Regresar</button>
       </header>
 
       <section class="crud-shell card">
-        <div class="crud-split">
-          <article class="panel">
-            <div class="panel-head">
-              <h3>Clientes</h3>
-              <button class="btn primary" @click="startCreateCliente">Nuevo cliente</button>
+        <template v-if="cuentasClientesView === 'list'">
+          <article class="panel toolbar-panel clients-toolbar">
+            <div class="toolbar-copy">
+              <h3>Clientes y cuentas</h3>
+              <p>Cada cliente contiene sus cuentas asociadas en tarjetas.</p>
             </div>
+            <div class="toolbar-actions">
+              <input
+                v-model="clientSearch"
+                class="search"
+                type="search"
+                placeholder="Buscar cliente, RUC, contacto o cuenta"
+              />
+              <button class="btn primary" @click="startCreateCliente">Crear nuevo cliente</button>
+            </div>
+          </article>
 
-            <input
-              v-model="clientSearch"
-              class="search"
-              type="search"
-              placeholder="Buscar cliente por nombre, RUC o contacto"
-            />
+          <section class="clientes-stack">
+            <article v-for="cliente in filteredClients" :key="cliente.id" class="panel cliente-card">
+              <header class="cliente-head">
+                <div>
+                  <h3>{{ cliente.nombre }}</h3>
+                  <p>RUC: {{ cliente.ruc }}</p>
+                </div>
+                <span class="status-badge" :class="cliente.estado === 'Activo' ? 'active' : 'inactive'">
+                  {{ cliente.estado }}
+                </span>
+              </header>
 
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Cliente</th>
-                    <th>RUC</th>
-                    <th>Contacto</th>
-                    <th>Estado</th>
-                    <th class="actions">Acciones</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr
-                    v-for="cliente in filteredClients"
-                    :key="cliente.id"
-                    class="row-clickable"
-                    :class="{ selected: selectedClienteId === cliente.id }"
-                    @click="selectClient(cliente.id)"
+              <div class="cliente-meta">
+                <p><strong>Contacto:</strong> {{ cliente.contacto }}</p>
+                <p><strong>Cuentas:</strong> {{ getClientAccounts(cliente.id).length }}</p>
+              </div>
+
+              <div class="cliente-actions">
+                <button class="btn mini" @click="startEditCliente(cliente)">Editar cliente</button>
+                <button class="btn mini danger" @click="removeClient(cliente.id)">Eliminar cliente</button>
+                <button
+                  class="btn primary"
+                  :disabled="cliente.estado === 'Inactivo'"
+                  @click="startCreateCuenta(cliente.id)"
+                >
+                  Crear nueva cuenta
+                </button>
+              </div>
+
+              <section class="cuentas-section">
+                <header class="cuentas-head">
+                  <h4>Cuentas del cliente</h4>
+                </header>
+
+                <div v-if="getFilteredAccountsForClient(cliente).length === 0" class="empty-cuentas">
+                  <p>No hay cuentas registradas para este cliente.</p>
+                  <button class="btn mini" :disabled="cliente.estado === 'Inactivo'" @click="startCreateCuenta(cliente.id)">
+                    Crear primera cuenta
+                  </button>
+                </div>
+
+                <div v-else class="cuentas-grid">
+                  <article
+                    v-for="cuenta in getFilteredAccountsForClient(cliente)"
+                    :key="`${cliente.id}-${cuenta.id}`"
+                    class="cuenta-card"
                   >
-                    <td>{{ cliente.nombre }}</td>
-                    <td>{{ cliente.ruc }}</td>
-                    <td>{{ cliente.contacto }}</td>
-                    <td>{{ cliente.estado }}</td>
-                    <td class="action-buttons" @click.stop>
-                      <button class="btn mini" @click="startEditCliente(cliente)">Editar</button>
-                      <button class="btn mini danger" @click="removeClient(cliente.id)">Eliminar</button>
-                    </td>
-                  </tr>
-                  <tr v-if="filteredClients.length === 0">
-                    <td colspan="5" class="empty-row">No hay clientes para la busqueda.</td>
-                  </tr>
-                </tbody>
-              </table>
+                    <div class="cuenta-top">
+                      <strong>{{ cuenta.nombre }}</strong>
+                      <span>{{ cuenta.codigo }}</span>
+                    </div>
+                    <p class="cuenta-address">{{ cuenta.direccion }}</p>
+                    <div class="cuenta-meta">
+                      <span>Contacto: {{ cuenta.contacto }}</span>
+                      <span>Telefono: {{ cuenta.telefono }}</span>
+                      <span class="state-pill" :class="cuenta.estado === 'Activa' ? 'ok' : 'warn'">{{ cuenta.estado }}</span>
+                    </div>
+                    <div class="cuenta-actions">
+                      <button class="btn mini" @click="startEditCuenta(cliente.id, cuenta)">Editar</button>
+                      <button class="btn mini danger" @click="removeCuenta(cliente.id, cuenta.id)">Eliminar</button>
+                    </div>
+                  </article>
+                </div>
+              </section>
+            </article>
+
+            <article v-if="filteredClients.length === 0" class="panel empty-clients">
+              <h3>No hay clientes para la busqueda.</h3>
+              <p>Intenta con otro termino o crea un cliente nuevo.</p>
+              <button class="btn primary" @click="startCreateCliente">Crear nuevo cliente</button>
+            </article>
+          </section>
+        </template>
+
+        <form
+          v-else-if="cuentasClientesView === 'cliente-form'"
+          class="editor card standalone-form"
+          @submit.prevent="saveClienteForm"
+        >
+          <div class="form-head">
+            <div>
+              <h3>{{ clienteFormMode === 'create' ? 'Crear nuevo cliente' : 'Editar cliente' }}</h3>
+              <p>Completa los datos del cliente y luego registra sus cuentas.</p>
             </div>
-          </article>
+            <button type="button" class="btn ghost" @click="goToClientesList">Volver</button>
+          </div>
 
-          <article class="panel">
-            <div class="panel-head">
-              <h3>
-                Cuentas de {{ selectedClientName || 'cliente no seleccionado' }}
-              </h3>
-              <button
-                class="btn primary"
-                :disabled="!selectedClienteId"
-                @click="startCreateCuenta"
-              >
-                Nueva cuenta
-              </button>
-            </div>
-
-            <input
-              v-model="accountSearch"
-              class="search"
-              type="search"
-              :disabled="!selectedClienteId"
-              placeholder="Buscar cuenta por codigo, nombre o direccion"
-            />
-
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Codigo</th>
-                    <th>Nombre cuenta</th>
-                    <th>Direccion</th>
-                    <th>Contacto</th>
-                    <th>Estado</th>
-                    <th class="actions">Acciones</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="cuenta in filteredAccounts" :key="cuenta.id">
-                    <td>{{ cuenta.codigo }}</td>
-                    <td>{{ cuenta.nombre }}</td>
-                    <td>{{ cuenta.direccion }}</td>
-                    <td>{{ cuenta.contacto }}</td>
-                    <td>{{ cuenta.estado }}</td>
-                    <td class="action-buttons">
-                      <button class="btn mini" @click="startEditCuenta(cuenta)">Editar</button>
-                      <button class="btn mini danger" @click="removeCuenta(cuenta.id)">Eliminar</button>
-                    </td>
-                  </tr>
-                  <tr v-if="!selectedClienteId">
-                    <td colspan="6" class="empty-row">Selecciona un cliente para ver y crear cuentas.</td>
-                  </tr>
-                  <tr v-else-if="filteredAccounts.length === 0">
-                    <td colspan="6" class="empty-row">No hay cuentas para este cliente.</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </article>
-        </div>
-
-        <form v-if="isEditing" class="editor card" @submit.prevent="saveCuentaClientes">
-          <h3>{{ editMode === 'create' ? 'Crear registro' : 'Editar registro' }}</h3>
-
-          <div v-if="editEntity === 'cliente'" class="editor-grid">
+          <div class="editor-grid">
             <label>
               <span>Nombre cliente</span>
               <input v-model.trim="clienteForm.nombre" type="text" required />
@@ -168,7 +161,24 @@
             </label>
           </div>
 
-          <div v-else class="editor-grid">
+          <div class="editor-actions">
+            <button type="button" class="btn ghost" @click="goToClientesList">Cancelar</button>
+            <button type="submit" class="btn primary">Guardar cliente</button>
+          </div>
+        </form>
+
+        <form v-else class="editor card standalone-form" @submit.prevent="saveCuentaForm">
+          <div class="form-head">
+            <div>
+              <h3>{{ cuentaFormMode === 'create' ? 'Crear nueva cuenta' : 'Editar cuenta' }}</h3>
+              <p>
+                Cliente: <strong>{{ cuentaTargetClienteName || 'No definido' }}</strong>
+              </p>
+            </div>
+            <button type="button" class="btn ghost" @click="goToClientesList">Volver</button>
+          </div>
+
+          <div class="editor-grid">
             <label>
               <span>Codigo cuenta</span>
               <input v-model.trim="cuentaForm.codigo" type="text" required />
@@ -199,8 +209,8 @@
           </div>
 
           <div class="editor-actions">
-            <button type="button" class="btn ghost" @click="cancelEdit">Cancelar</button>
-            <button type="submit" class="btn primary">Guardar</button>
+            <button type="button" class="btn ghost" @click="goToClientesList">Cancelar</button>
+            <button type="submit" class="btn primary">Guardar cuenta</button>
           </div>
         </form>
       </section>
@@ -277,6 +287,7 @@ import { computed, reactive, ref } from 'vue';
 type ModuleKey = 'inventario' | 'cuentas-clientes' | 'personal-campo' | 'reportes';
 type GenericModuleKey = 'inventario' | 'personal-campo' | 'reportes';
 type EditMode = 'create' | 'edit';
+type CuentasClientesView = 'list' | 'cliente-form' | 'cuenta-form';
 type EditEntity = 'generic' | 'cliente' | 'cuenta';
 
 interface ColumnDef {
@@ -408,8 +419,12 @@ const cuentasByCliente = reactive<Record<number, CuentaItem[]>>({
 const activeModuleKey = ref<ModuleKey | null>(null);
 const searchQuery = ref('');
 const clientSearch = ref('');
-const accountSearch = ref('');
-const selectedClienteId = ref<number | null>(clientesRows.value[0]?.id || null);
+const cuentasClientesView = ref<CuentasClientesView>('list');
+const clienteFormMode = ref<EditMode>('create');
+const cuentaFormMode = ref<EditMode>('create');
+const clienteEditingId = ref<number | null>(null);
+const cuentaEditingId = ref<number | null>(null);
+const cuentaTargetClienteId = ref<number | null>(null);
 
 const isEditing = ref(false);
 const editMode = ref<EditMode>('create');
@@ -457,40 +472,33 @@ const filteredClients = computed(() => {
   const query = clientSearch.value.trim().toLowerCase();
   if (!query) return clientesRows.value;
 
-  return clientesRows.value.filter((cliente) =>
-    [cliente.nombre, cliente.ruc, cliente.contacto, cliente.estado]
+  return clientesRows.value.filter((cliente) => {
+    const matchesCliente = [cliente.nombre, cliente.ruc, cliente.contacto, cliente.estado]
       .join(' ')
       .toLowerCase()
-      .includes(query)
-  );
+      .includes(query);
+
+    if (matchesCliente) return true;
+    return getClientAccounts(cliente.id).some((cuenta) =>
+      [cuenta.codigo, cuenta.nombre, cuenta.direccion, cuenta.contacto, cuenta.telefono, cuenta.estado]
+        .join(' ')
+        .toLowerCase()
+        .includes(query)
+    );
+  });
 });
 
-const selectedClientName = computed(() =>
-  clientesRows.value.find((cliente) => cliente.id === selectedClienteId.value)?.nombre || ''
+const cuentaTargetClienteName = computed(() =>
+  clientesRows.value.find((cliente) => cliente.id === cuentaTargetClienteId.value)?.nombre || ''
 );
-
-const selectedClientAccounts = computed(() => {
-  if (!selectedClienteId.value) return [];
-  return cuentasByCliente[selectedClienteId.value] || [];
-});
-
-const filteredAccounts = computed(() => {
-  const query = accountSearch.value.trim().toLowerCase();
-  if (!query) return selectedClientAccounts.value;
-
-  return selectedClientAccounts.value.filter((cuenta) =>
-    [cuenta.codigo, cuenta.nombre, cuenta.direccion, cuenta.contacto, cuenta.estado]
-      .join(' ')
-      .toLowerCase()
-      .includes(query)
-  );
-});
 
 function openModule(key: ModuleKey) {
   activeModuleKey.value = key;
   searchQuery.value = '';
   clientSearch.value = '';
-  accountSearch.value = '';
+  if (key === 'cuentas-clientes') {
+    goToClientesList();
+  }
   cancelEdit();
 }
 
@@ -498,7 +506,7 @@ function goBack() {
   activeModuleKey.value = null;
   searchQuery.value = '';
   clientSearch.value = '';
-  accountSearch.value = '';
+  goToClientesList();
   cancelEdit();
 }
 
@@ -565,11 +573,6 @@ function removeGenericRow(id: number) {
     .filter((row) => Number(row.id) !== id);
 }
 
-function selectClient(id: number) {
-  selectedClienteId.value = id;
-  accountSearch.value = '';
-}
-
 function resetClienteForm() {
   clienteForm.id = 0;
   clienteForm.nombre = '';
@@ -589,51 +592,44 @@ function resetCuentaForm() {
 }
 
 function startCreateCliente() {
-  editEntity.value = 'cliente';
-  editMode.value = 'create';
-  editingId.value = null;
+  clienteFormMode.value = 'create';
+  clienteEditingId.value = null;
   resetClienteForm();
-  isEditing.value = true;
+  cuentasClientesView.value = 'cliente-form';
 }
 
 function startEditCliente(cliente: ClienteItem) {
-  editEntity.value = 'cliente';
-  editMode.value = 'edit';
-  editingId.value = cliente.id;
+  clienteFormMode.value = 'edit';
+  clienteEditingId.value = cliente.id;
   clienteForm.id = cliente.id;
   clienteForm.nombre = cliente.nombre;
   clienteForm.ruc = cliente.ruc;
   clienteForm.contacto = cliente.contacto;
   clienteForm.estado = cliente.estado;
-  isEditing.value = true;
+  cuentasClientesView.value = 'cliente-form';
 }
 
 function removeClient(id: number) {
   clientesRows.value = clientesRows.value.filter((cliente) => cliente.id !== id);
   delete cuentasByCliente[id];
 
-  if (selectedClienteId.value === id) {
-    selectedClienteId.value = clientesRows.value[0]?.id || null;
-  }
-
-  if (editEntity.value === 'cliente' && editingId.value === id) {
-    cancelEdit();
+  if (cuentaTargetClienteId.value === id) {
+    goToClientesList();
   }
 }
 
-function startCreateCuenta() {
-  if (!selectedClienteId.value) return;
-  editEntity.value = 'cuenta';
-  editMode.value = 'create';
-  editingId.value = null;
+function startCreateCuenta(clienteId: number) {
+  cuentaFormMode.value = 'create';
+  cuentaEditingId.value = null;
+  cuentaTargetClienteId.value = clienteId;
   resetCuentaForm();
-  isEditing.value = true;
+  cuentasClientesView.value = 'cuenta-form';
 }
 
-function startEditCuenta(cuenta: CuentaItem) {
-  editEntity.value = 'cuenta';
-  editMode.value = 'edit';
-  editingId.value = cuenta.id;
+function startEditCuenta(clienteId: number, cuenta: CuentaItem) {
+  cuentaFormMode.value = 'edit';
+  cuentaEditingId.value = cuenta.id;
+  cuentaTargetClienteId.value = clienteId;
   cuentaForm.id = cuenta.id;
   cuentaForm.codigo = cuenta.codigo;
   cuentaForm.nombre = cuenta.nombre;
@@ -641,55 +637,64 @@ function startEditCuenta(cuenta: CuentaItem) {
   cuentaForm.contacto = cuenta.contacto;
   cuentaForm.telefono = cuenta.telefono;
   cuentaForm.estado = cuenta.estado;
-  isEditing.value = true;
+  cuentasClientesView.value = 'cuenta-form';
 }
 
-function removeCuenta(id: number) {
-  if (!selectedClienteId.value) return;
-
-  cuentasByCliente[selectedClienteId.value] = (cuentasByCliente[selectedClienteId.value] || [])
+function removeCuenta(clienteId: number, id: number) {
+  cuentasByCliente[clienteId] = (cuentasByCliente[clienteId] || [])
     .filter((cuenta) => cuenta.id !== id);
-
-  if (editEntity.value === 'cuenta' && editingId.value === id) {
-    cancelEdit();
-  }
 }
 
-function saveCuentaClientes() {
-  if (editEntity.value === 'cliente') {
-    if (editMode.value === 'create') {
-      const nextId = clientesRows.value.length ? Math.max(...clientesRows.value.map((cliente) => cliente.id)) + 1 : 1;
-      const newCliente: ClienteItem = {
-        id: nextId,
+function saveClienteForm() {
+  if (clienteFormMode.value === 'create') {
+    const nextId = clientesRows.value.length ? Math.max(...clientesRows.value.map((cliente) => cliente.id)) + 1 : 1;
+    const newCliente: ClienteItem = {
+      id: nextId,
+      nombre: clienteForm.nombre.trim(),
+      ruc: clienteForm.ruc.trim(),
+      contacto: clienteForm.contacto.trim(),
+      estado: clienteForm.estado,
+    };
+    clientesRows.value.unshift(newCliente);
+    cuentasByCliente[nextId] = cuentasByCliente[nextId] || [];
+  } else {
+    const index = clientesRows.value.findIndex((cliente) => cliente.id === clienteEditingId.value);
+    if (index >= 0) {
+      clientesRows.value[index] = {
+        id: clientesRows.value[index].id,
         nombre: clienteForm.nombre.trim(),
         ruc: clienteForm.ruc.trim(),
         contacto: clienteForm.contacto.trim(),
         estado: clienteForm.estado,
       };
-      clientesRows.value.unshift(newCliente);
-      cuentasByCliente[nextId] = cuentasByCliente[nextId] || [];
-      selectedClienteId.value = nextId;
-    } else {
-      const index = clientesRows.value.findIndex((cliente) => cliente.id === editingId.value);
-      if (index >= 0) {
-        clientesRows.value[index] = {
-          id: clientesRows.value[index].id,
-          nombre: clienteForm.nombre.trim(),
-          ruc: clienteForm.ruc.trim(),
-          contacto: clienteForm.contacto.trim(),
-          estado: clienteForm.estado,
-        };
-      }
     }
+  }
+
+  goToClientesList();
+}
+
+function saveCuentaForm() {
+  if (!cuentaTargetClienteId.value) return;
+
+  const target = cuentasByCliente[cuentaTargetClienteId.value] || [];
+
+  if (cuentaFormMode.value === 'create') {
+    const nextId = target.length ? Math.max(...target.map((cuenta) => cuenta.id)) + 1 : 1;
+    const newCuenta: CuentaItem = {
+      id: nextId,
+      codigo: cuentaForm.codigo.trim(),
+      nombre: cuentaForm.nombre.trim(),
+      direccion: cuentaForm.direccion.trim(),
+      contacto: cuentaForm.contacto.trim(),
+      telefono: cuentaForm.telefono.trim(),
+      estado: cuentaForm.estado,
+    };
+    target.unshift(newCuenta);
   } else {
-    if (!selectedClienteId.value) return;
-
-    const target = cuentasByCliente[selectedClienteId.value] || [];
-
-    if (editMode.value === 'create') {
-      const nextId = target.length ? Math.max(...target.map((cuenta) => cuenta.id)) + 1 : 1;
-      const newCuenta: CuentaItem = {
-        id: nextId,
+    const index = target.findIndex((cuenta) => cuenta.id === cuentaEditingId.value);
+    if (index >= 0) {
+      target[index] = {
+        id: target[index].id,
         codigo: cuentaForm.codigo.trim(),
         nombre: cuentaForm.nombre.trim(),
         direccion: cuentaForm.direccion.trim(),
@@ -697,26 +702,46 @@ function saveCuentaClientes() {
         telefono: cuentaForm.telefono.trim(),
         estado: cuentaForm.estado,
       };
-      target.unshift(newCuenta);
-      cuentasByCliente[selectedClienteId.value] = target;
-    } else {
-      const index = target.findIndex((cuenta) => cuenta.id === editingId.value);
-      if (index >= 0) {
-        target[index] = {
-          id: target[index].id,
-          codigo: cuentaForm.codigo.trim(),
-          nombre: cuentaForm.nombre.trim(),
-          direccion: cuentaForm.direccion.trim(),
-          contacto: cuentaForm.contacto.trim(),
-          telefono: cuentaForm.telefono.trim(),
-          estado: cuentaForm.estado,
-        };
-      }
-      cuentasByCliente[selectedClienteId.value] = target;
     }
   }
 
-  cancelEdit();
+  cuentasByCliente[cuentaTargetClienteId.value] = target;
+  goToClientesList();
+}
+
+function getClientAccounts(clienteId: number) {
+  return cuentasByCliente[clienteId] || [];
+}
+
+function getFilteredAccountsForClient(cliente: ClienteItem) {
+  const accounts = getClientAccounts(cliente.id);
+  const query = clientSearch.value.trim().toLowerCase();
+  if (!query) return accounts;
+
+  const matchesCliente = [cliente.nombre, cliente.ruc, cliente.contacto, cliente.estado]
+    .join(' ')
+    .toLowerCase()
+    .includes(query);
+
+  if (matchesCliente) return accounts;
+
+  return accounts.filter((cuenta) =>
+    [cuenta.codigo, cuenta.nombre, cuenta.direccion, cuenta.contacto, cuenta.telefono, cuenta.estado]
+      .join(' ')
+      .toLowerCase()
+      .includes(query)
+  );
+}
+
+function goToClientesList() {
+  cuentasClientesView.value = 'list';
+  clienteFormMode.value = 'create';
+  cuentaFormMode.value = 'create';
+  clienteEditingId.value = null;
+  cuentaEditingId.value = null;
+  cuentaTargetClienteId.value = null;
+  resetClienteForm();
+  resetCuentaForm();
 }
 
 function cancelEdit() {
@@ -850,16 +875,17 @@ small {
 .crud-shell {
   display: grid;
   gap: 10px;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr);
   padding: 10px;
   overflow: hidden;
 }
 
-.crud-split {
+.clientes-stack {
   min-height: 0;
   display: grid;
-  grid-template-columns: 1fr 1fr;
   gap: 10px;
+  overflow: auto;
+  align-content: start;
 }
 
 .panel {
@@ -877,6 +903,26 @@ small {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+
+.clients-toolbar {
+  align-items: flex-start;
+}
+
+.toolbar-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: min(100%, 760px);
+}
+
+.toolbar-actions .search {
+  flex: 1;
 }
 
 .panel-head {
@@ -936,6 +982,155 @@ select {
 .btn.danger {
   border-color: #ef4444;
   color: #fecaca;
+}
+
+.cliente-card {
+  gap: 12px;
+  background: linear-gradient(160deg, rgba(15, 32, 50, 0.88), rgba(10, 22, 35, 0.95));
+}
+
+.cliente-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.cliente-head p {
+  margin-top: 4px;
+}
+
+.status-badge {
+  border-radius: 999px;
+  border: 1px solid #3f5873;
+  padding: 4px 10px;
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.status-badge.active {
+  color: #baf6dc;
+  border-color: #2f8f65;
+  background: rgba(16, 185, 129, 0.12);
+}
+
+.status-badge.inactive {
+  color: #f6d0d0;
+  border-color: #a05a5a;
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.cliente-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  font-size: 0.86rem;
+}
+
+.cliente-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cuentas-section {
+  border-top: 1px solid rgba(220, 232, 245, 0.2);
+  padding-top: 10px;
+  display: grid;
+  gap: 10px;
+}
+
+.cuentas-head h4 {
+  margin: 0;
+  color: #c9daed;
+  font-size: 0.9rem;
+}
+
+.cuentas-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 8px;
+}
+
+.cuenta-card {
+  border: 1px solid #39506a;
+  border-radius: var(--radius);
+  background: rgba(10, 21, 33, 0.85);
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.cuenta-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+
+.cuenta-top span {
+  border-radius: 3px;
+  border: 1px solid #445f7d;
+  color: #b7d0ea;
+  font-size: 0.72rem;
+  padding: 2px 7px;
+}
+
+.cuenta-address {
+  color: #bed1e3;
+  font-size: 0.85rem;
+}
+
+.cuenta-meta {
+  display: grid;
+  gap: 3px;
+  color: #aac3db;
+  font-size: 0.78rem;
+}
+
+.state-pill {
+  width: fit-content;
+  border-radius: 999px;
+  padding: 3px 8px;
+  border: 1px solid #3f5873;
+  font-weight: 700;
+}
+
+.state-pill.ok {
+  color: #baf6dc;
+  border-color: #2f8f65;
+  background: rgba(16, 185, 129, 0.12);
+}
+
+.state-pill.warn {
+  color: #fde8b9;
+  border-color: #a27226;
+  background: rgba(245, 158, 11, 0.14);
+}
+
+.cuenta-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.empty-cuentas,
+.empty-clients {
+  display: grid;
+  gap: 8px;
+  place-items: start;
+}
+
+.standalone-form {
+  max-width: 980px;
+  width: 100%;
+  justify-self: center;
+}
+
+.form-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
 }
 
 .table-wrap {
@@ -1033,7 +1228,7 @@ label span {
 }
 
 @media (max-width: 920px) {
-  .crud-split {
+  .cliente-meta {
     grid-template-columns: 1fr;
   }
 }
@@ -1053,9 +1248,15 @@ label span {
 
   .crud-head,
   .toolbar-panel,
-  .panel-head {
+  .panel-head,
+  .toolbar-actions,
+  .form-head {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .cuentas-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>

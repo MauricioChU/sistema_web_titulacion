@@ -15,6 +15,7 @@
     <main class="content" @click="sidebarOpen = false">
       <DashboardView v-if="currentView === 'dashboard'" />
       <PedidosView v-else-if="currentView === 'pedidos'" />
+      <PedidosTecnicoView v-else-if="currentView === 'pedidos-tecnico'" />
       <BaseDatosView v-else />
     </main>
 
@@ -30,6 +31,7 @@ import BaseDatosView from './mockup/views/BaseDatosView.vue';
 import DashboardView from './mockup/views/DashboardView.vue';
 import LoginView from './mockup/views/LoginView.vue';
 import PedidosView from './mockup/views/PedidosView.vue';
+import PedidosTecnicoView from './mockup/views/PedidosTecnicoView.vue';
 
 const isAuthenticated = ref(localStorage.getItem('prointel_mock_auth') === '1');
 const currentView = ref<MockViewKey>('dashboard');
@@ -37,7 +39,8 @@ const sidebarOpen = ref(false);
 
 const menuItems = computed<MenuItem[]>(() => [
   { key: 'dashboard', label: 'Dashboard' },
-  { key: 'pedidos', label: 'Pedidos' },
+  { key: 'pedidos', label: 'Pedidos Coordinador' },
+  { key: 'pedidos-tecnico', label: 'Mis Pedidos Tecnico' },
   { key: 'base-datos', label: 'Base de datos' },
 ]);
 

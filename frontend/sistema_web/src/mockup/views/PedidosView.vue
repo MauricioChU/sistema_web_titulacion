@@ -72,25 +72,31 @@
           <form class="create-form" @submit.prevent="createPedido">
             <template v-if="createStep === 1">
               <label>
-                Codigo de cuenta
-                <input
-                  v-model="form.accountCode"
-                  list="account-codes"
-                  required
-                  placeholder="Ej: CUE-1002"
-                  @change="applyAccountByCode"
-                  @blur="applyAccountByCode"
-                />
+                Cliente registrado
+                <select v-model="form.clientName" required @change="onCreateClientChange">
+                  <option disabled value="">Selecciona un cliente</option>
+                  <option v-for="client in createClientOptions" :key="client" :value="client">
+                    {{ client }}
+                  </option>
+                </select>
               </label>
-              <datalist id="account-codes">
-                <option v-for="acc in accountCatalog" :key="acc.code" :value="acc.code">
-                  {{ acc.clientName }} - {{ acc.accountName }}
-                </option>
-              </datalist>
               <label>
-                Nombre del cliente
-                <input v-model="form.clientName" required placeholder="Nombre del cliente" />
+                Cuenta del cliente
+                <select
+                  v-model="form.accountCode"
+                  required
+                  :disabled="!form.clientName || createAccountOptions.length === 0"
+                  @change="applyAccountByCode"
+                >
+                  <option disabled value="">Selecciona una cuenta</option>
+                  <option v-for="acc in createAccountOptions" :key="acc.code" :value="acc.code">
+                    {{ acc.code }} - {{ acc.accountName }}
+                  </option>
+                </select>
               </label>
+              <p v-if="form.clientName && createAccountOptions.length === 0" class="wide account-helper">
+                Este cliente no tiene cuentas disponibles para seleccionar.
+              </p>
               <label>
                 Contacto
                 <input v-model="form.contactName" required placeholder="Nombre del contacto" />
@@ -177,10 +183,10 @@
               </article>
               <button
                 class="btn primary phase-next"
-                :disabled="currentPhaseIndex >= phaseOrder.length - 1"
-                @click="goToNextPhase"
+                :disabled="phaseOptions.length === 0"
+                @click="openPhaseModal()"
               >
-                Siguiente fase
+                Cambiar fase
               </button>
             </div>
           </div>
@@ -195,7 +201,7 @@
                 active: index === currentPhaseIndex,
                 upcoming: index > currentPhaseIndex,
               }"
-              @click="updatePhase(phase.key)"
+              @click="openPhaseModal(phase.key)"
             >
               <span class="phase-circle">{{ index + 1 }}</span>
               <strong class="phase-label">{{ phase.label }}</strong>
@@ -208,8 +214,9 @@
                 v-for="tab in tabs"
                 :key="tab.key"
                 class="tab"
-                :class="{ active: activeTab === tab.key }"
-                @click="activeTab = tab.key"
+                :class="{ active: activeTab === tab.key, locked: !isTabEnabled(tab.key) }"
+                :disabled="!isTabEnabled(tab.key)"
+                @click="setActiveTab(tab.key)"
               >
                 {{ tab.label }}
               </button>
@@ -240,6 +247,62 @@
                   <li><span>Fecha alta</span><strong>{{ selectedPedido.date }}</strong></li>
                   <li><span>Prioridad</span><strong>{{ selectedPedido.priority }}</strong></li>
                 </ul>
+              </article>
+
+              <article class="panel sync-panel">
+                <h4>Entradas del tecnico</h4>
+
+                <div class="sync-block">
+                  <h5>Actualizaciones</h5>
+                  <ul v-if="tecnicoUpdatesForSelected.length" class="sync-updates">
+                    <li v-for="update in tecnicoUpdatesForSelected" :key="update.id">
+                      <strong>{{ update.createdAt }}</strong>
+                      <span>{{ update.note }}</span>
+                    </li>
+                  </ul>
+                  <p v-else class="sync-empty">Sin actualizaciones registradas por tecnico.</p>
+                </div>
+
+                <div class="sync-block">
+                  <h5>Evidencias</h5>
+                  <div v-if="tecnicoEvidenciasForSelected.length" class="sync-evidence-grid">
+                    <article v-for="evidencia in tecnicoEvidenciasForSelected" :key="evidencia.id" class="sync-evidence-item">
+                      <img :src="evidencia.url" :alt="evidencia.name" />
+                      <small>{{ evidencia.createdAt }} - {{ evidencia.stage }} - {{ evidencia.source }}</small>
+                      <small v-if="evidencia.description">{{ evidencia.description }}</small>
+                    </article>
+                  </div>
+                  <p v-else class="sync-empty">Sin evidencias cargadas por tecnico.</p>
+                </div>
+
+                <div class="sync-block">
+                  <h5>Checklist tecnico</h5>
+                  <ul v-if="tecnicoChecklistForSelected.length" class="sync-checklist">
+                    <li v-for="step in tecnicoChecklistForSelected" :key="step.id" :class="{ done: step.done }">
+                      <span>{{ step.label }}</span>
+                      <strong>{{ step.done ? (step.doneAt || 'Completado') : 'Pendiente' }}</strong>
+                    </li>
+                  </ul>
+                  <p v-else class="sync-empty">Sin checklist registrado por tecnico.</p>
+                </div>
+
+                <div class="sync-block">
+                  <h5>Formato de servicio tecnico</h5>
+                  <div v-if="tecnicoReportsForSelected.length" class="sync-reports">
+                    <article v-for="report in tecnicoReportsForSelected" :key="report.id" class="sync-report-item">
+                      <p><strong>Fecha:</strong> {{ report.createdAt }}</p>
+                      <p><strong>Responsable local:</strong> {{ report.responsableLocal }}</p>
+                      <p><strong>Pedido solicitado:</strong> {{ report.pedidoSolicitado }}</p>
+                      <p><strong>Observaciones:</strong> {{ report.observaciones }}</p>
+                      <p><strong>Recomendaciones:</strong> {{ report.recomendaciones }}</p>
+                      <details>
+                        <summary>Ver firma del cliente</summary>
+                        <img :src="report.firmaCliente" alt="Firma cliente" class="sync-signature" />
+                      </details>
+                    </article>
+                  </div>
+                  <p v-else class="sync-empty">Sin formato de servicio tecnico enviado.</p>
+                </div>
               </article>
             </section>
 
@@ -477,11 +540,55 @@
         </template>
       </article>
     </div>
+
+    <div v-if="showPhaseModal" class="phase-modal-overlay" @click.self="closePhaseModal">
+      <article class="phase-modal card">
+        <header class="phase-modal-head">
+          <h3>Cambiar fase</h3>
+          <p>
+            Fase actual: <strong>{{ selectedPedido ? phaseLabel[selectedPedido.phase] : '-' }}</strong>
+          </p>
+        </header>
+
+        <label>
+          Fase de destino
+          <select v-model="phaseModalTarget" required>
+            <option disabled value="">Selecciona fase</option>
+            <option v-for="phase in phaseOptions" :key="phase.key" :value="phase.key">
+              {{ phase.label }}
+            </option>
+          </select>
+        </label>
+
+        <label>
+          Sustento (obligatorio)
+          <textarea
+            v-model.trim="phaseModalSustento"
+            rows="4"
+            required
+            placeholder="Explica por que se realiza el cambio de fase"
+          ></textarea>
+        </label>
+
+        <div class="phase-modal-actions">
+          <button type="button" class="btn ghost" @click="closePhaseModal">Cancelar</button>
+          <button
+            type="button"
+            class="btn primary"
+            :disabled="!phaseModalTarget || !phaseModalSustento.trim()"
+            @click="confirmPhaseChange"
+          >
+            Confirmar cambio
+          </button>
+        </div>
+      </article>
+    </div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
+import { useTecnicoBridgeStore } from '../stores/tecnicoBridgeStore';
 
 type PhaseKey = 'deteccion' | 'asignacion' | 'cierre' | 'facturacion';
 type TabKey = 'detalles' | 'historial' | 'asignacion' | 'diagnostico' | 'costos';
@@ -956,12 +1063,26 @@ const pedidos = ref<PedidoItem[]>([
   },
 ]);
 
-const selectedId = ref<string>(pedidos.value[0]?.id || '');
+const tecnicoBridge = useTecnicoBridgeStore();
+const allPedidos = computed(() => tecnicoBridge.mergeWithCoordinatorPedidos(pedidos.value));
+
+watch(
+  pedidos,
+  (next) => {
+    tecnicoBridge.setCoordinatorSnapshot(next);
+  },
+  { deep: true, immediate: true }
+);
+
+const selectedId = ref<string>(allPedidos.value[0]?.id || '');
 const activeTab = ref<TabKey>('detalles');
 const creating = ref(false);
 const createStep = ref<1 | 2>(1);
 const phaseFilter = ref<'all' | PhaseKey>('all');
 const searchQuery = ref('');
+const showPhaseModal = ref(false);
+const phaseModalTarget = ref<PhaseKey | ''>('');
+const phaseModalSustento = ref('');
 
 const form = reactive({
   accountCode: '',
@@ -985,6 +1106,17 @@ const selectedAccount = computed(() => {
   return accountCatalog.find((acc) => acc.code === code) || null;
 });
 
+const createClientOptions = computed(() => {
+  const clients = new Set(accountCatalog.map((acc) => acc.clientName));
+  return Array.from(clients).sort((a, b) => a.localeCompare(b, 'es'));
+});
+
+const createAccountOptions = computed(() => {
+  const clientName = form.clientName.trim();
+  if (!clientName) return [];
+  return accountCatalog.filter((acc) => acc.clientName === clientName);
+});
+
 const linkedAccounts = computed(() => {
   if (!selectedAccount.value) return [];
   return accountCatalog
@@ -994,7 +1126,7 @@ const linkedAccounts = computed(() => {
 
 const filteredPedidos = computed(() => {
   const query = searchQuery.value.trim().toLowerCase();
-  return pedidos.value.filter((p) => {
+  return allPedidos.value.filter((p) => {
     const byPhase = phaseFilter.value === 'all' || p.phase === phaseFilter.value;
     if (!byPhase) return false;
     if (!query) return true;
@@ -1006,7 +1138,23 @@ const filteredPedidos = computed(() => {
   });
 });
 
-const selectedPedido = computed(() => pedidos.value.find((p) => p.id === selectedId.value));
+const selectedPedido = computed(() => allPedidos.value.find((p) => p.id === selectedId.value));
+const tecnicoUpdatesForSelected = computed(() => {
+  if (!selectedPedido.value) return [];
+  return tecnicoBridge.getUpdates(selectedPedido.value.id);
+});
+const tecnicoEvidenciasForSelected = computed(() => {
+  if (!selectedPedido.value) return [];
+  return tecnicoBridge.getEvidencias(selectedPedido.value.id);
+});
+const tecnicoChecklistForSelected = computed(() => {
+  if (!selectedPedido.value) return [];
+  return tecnicoBridge.getChecklist(selectedPedido.value.id);
+});
+const tecnicoReportsForSelected = computed(() => {
+  if (!selectedPedido.value) return [];
+  return tecnicoBridge.getServiceReports(selectedPedido.value.id);
+});
 const selectedAssignment = computed(() => {
   if (!selectedPedido.value) return null;
   const pedido = selectedPedido.value;
@@ -1076,14 +1224,74 @@ const phaseProgress = computed(() => {
   return (currentPhaseIndex.value / (workflowPhases.length - 1)) * 100;
 });
 
+const phaseRank: Record<PhaseKey, number> = {
+  deteccion: 0,
+  asignacion: 1,
+  cierre: 2,
+  facturacion: 3,
+};
+
+const phaseOptions = computed(() => {
+  if (!selectedPedido.value) return [];
+  return workflowPhases.filter((phase) => phase.key !== selectedPedido.value?.phase);
+});
+
+function isTabEnabled(tab: TabKey) {
+  if (!selectedPedido.value) return false;
+  const currentRank = phaseRank[selectedPedido.value.phase];
+
+  if (tab === 'detalles' || tab === 'historial') return true;
+  if (tab === 'asignacion') return currentRank >= phaseRank.asignacion;
+  if (tab === 'diagnostico') return currentRank >= phaseRank.cierre;
+  if (tab === 'costos') return currentRank >= phaseRank.facturacion;
+  return false;
+}
+
+function ensureValidTab() {
+  if (!isTabEnabled(activeTab.value)) {
+    activeTab.value = 'detalles';
+  }
+}
+
+function setActiveTab(tab: TabKey) {
+  if (!isTabEnabled(tab)) return;
+  activeTab.value = tab;
+}
+
 function countByPhase(key: 'all' | PhaseKey) {
-  if (key === 'all') return pedidos.value.length;
-  return pedidos.value.filter((p) => p.phase === key).length;
+  if (key === 'all') return allPedidos.value.length;
+  return allPedidos.value.filter((p) => p.phase === key).length;
 }
 
 function selectPedido(id: string) {
   selectedId.value = id;
   creating.value = false;
+  closePhaseModal();
+  ensureValidTab();
+}
+
+function openPhaseModal(preferredPhase?: PhaseKey) {
+  if (!selectedPedido.value) return;
+
+  const canUsePreferred = preferredPhase && preferredPhase !== selectedPedido.value.phase;
+  phaseModalTarget.value = canUsePreferred
+    ? preferredPhase
+    : (phaseOptions.value[0]?.key || '');
+  phaseModalSustento.value = '';
+  showPhaseModal.value = true;
+}
+
+function closePhaseModal() {
+  showPhaseModal.value = false;
+  phaseModalTarget.value = '';
+  phaseModalSustento.value = '';
+}
+
+function confirmPhaseChange() {
+  if (!selectedPedido.value || !phaseModalTarget.value || !phaseModalSustento.value.trim()) return;
+
+  applyPhaseChange(phaseModalTarget.value, phaseModalSustento.value.trim());
+  closePhaseModal();
 }
 
 function goToAssignmentStep(step: 1 | 2 | 3) {
@@ -1163,7 +1371,11 @@ function registerVisit() {
 
 function applyAccountByCode() {
   const account = selectedAccount.value;
-  if (!account) return;
+  if (!account) {
+    clearCreateAccountFields();
+    return;
+  }
+
   form.accountCode = account.code;
   form.clientName = account.clientName;
   form.contactName = account.contactName;
@@ -1174,6 +1386,21 @@ function applyAccountByCode() {
   form.contactPhone = account.contactPhone;
   form.contactEmail = account.contactEmail;
   if (!form.service.trim()) form.service = account.defaultService;
+}
+
+function clearCreateAccountFields() {
+  form.contactName = '';
+  form.referenceAddress = '';
+  form.district = '';
+  form.coordinates = '';
+  form.documentNumber = '';
+  form.contactPhone = '';
+  form.contactEmail = '';
+}
+
+function onCreateClientChange() {
+  form.accountCode = '';
+  clearCreateAccountFields();
 }
 
 function goToStepTwo() {
@@ -1192,21 +1419,19 @@ function goToStepTwo() {
   createStep.value = 2;
 }
 
-function updatePhase(phase: PhaseKey) {
+function applyPhaseChange(phase: PhaseKey, sustento: string) {
   if (!selectedPedido.value) return;
+  const prevPhase = selectedPedido.value.phase;
+
+  if (prevPhase === phase) return;
+
   selectedPedido.value.phase = phase;
   if (phase === 'facturacion') selectedPedido.value.status = 'Por facturar';
   if (phase === 'cierre') selectedPedido.value.status = 'En cierre';
   if (phase === 'asignacion') selectedPedido.value.status = 'En proceso';
   if (phase === 'deteccion') selectedPedido.value.status = 'Pendiente';
-  pushHistory(`Fase actualizada a ${phaseLabel[phase]}`);
-}
-
-function goToNextPhase() {
-  if (!selectedPedido.value) return;
-  const current = phaseOrder.indexOf(selectedPedido.value.phase);
-  if (current < 0 || current >= phaseOrder.length - 1) return;
-  updatePhase(phaseOrder[current + 1]);
+  pushHistory(`Cambio de fase: ${phaseLabel[prevPhase]} -> ${phaseLabel[phase]}. Sustento: ${sustento}`);
+  ensureValidTab();
 }
 
 function pushHistory(note: string) {
@@ -1222,14 +1447,30 @@ function pushHistory(note: string) {
 }
 
 function openCreate() {
+  resetCreateForm();
   creating.value = true;
   createStep.value = 1;
   activeTab.value = 'detalles';
 }
 
+function resetCreateForm() {
+  form.accountCode = '';
+  form.clientName = '';
+  form.contactName = '';
+  form.referenceAddress = '';
+  form.district = '';
+  form.coordinates = '';
+  form.documentNumber = '';
+  form.contactPhone = '';
+  form.contactEmail = '';
+  form.service = '';
+  form.problemDescription = '';
+  form.urgent = false;
+}
+
 function createPedido() {
   if (!form.service.trim()) return;
-  const nextNumber = 1086 + pedidos.value.length;
+  const nextNumber = 1086 + allPedidos.value.length;
   const newPedido: PedidoItem = {
     id: String(Date.now()),
     code: `OT-${nextNumber}`,
@@ -1269,18 +1510,7 @@ function createPedido() {
   createStep.value = 1;
   activeTab.value = 'detalles';
 
-  form.accountCode = '';
-  form.clientName = '';
-  form.contactName = '';
-  form.referenceAddress = '';
-  form.district = '';
-  form.coordinates = '';
-  form.documentNumber = '';
-  form.contactPhone = '';
-  form.contactEmail = '';
-  form.service = '';
-  form.problemDescription = '';
-  form.urgent = false;
+  resetCreateForm();
 }
 
 function recalculateCosts() {
@@ -1301,6 +1531,9 @@ function recalculateCosts() {
   --text-muted: #9db3cb;
   --border-light: #4a6078;
   --border-strong: #e3edf8;
+  --scroll-track: #0b1a2a;
+  --scroll-thumb: #44607d;
+  --scroll-thumb-hover: #5c7b9c;
   --radius: 4px;
 
   display: grid;
@@ -1314,6 +1547,31 @@ function recalculateCosts() {
   background: linear-gradient(180deg, #122235 0%, #0f1c2b 100%);
   border: 1px solid var(--border-light);
   border-radius: var(--radius);
+}
+
+.pedidos-view :where(.list-body, .detail, .tab-content, .table-wrap) {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll-thumb) var(--scroll-track);
+}
+
+.pedidos-view :where(.list-body, .detail, .tab-content, .table-wrap)::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.pedidos-view :where(.list-body, .detail, .tab-content, .table-wrap)::-webkit-scrollbar-track {
+  background: linear-gradient(180deg, #091727, #0c1b2c);
+  border-radius: 999px;
+}
+
+.pedidos-view :where(.list-body, .detail, .tab-content, .table-wrap)::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #4f6f90, #3e5c79);
+  border: 2px solid #0c1b2c;
+  border-radius: 999px;
+}
+
+.pedidos-view :where(.list-body, .detail, .tab-content, .table-wrap)::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #6287ac, #4f7193);
 }
 
 .head {
@@ -1573,6 +1831,7 @@ h2 {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  overflow: hidden;
 }
 
 .create-head,
@@ -1774,15 +2033,16 @@ textarea {
 }
 
 .tabs {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 4px;
-  overflow-x: auto;
+  overflow: hidden;
   padding: 2px;
   border: 1px solid rgba(227, 237, 248, 0.22);
   border-radius: var(--radius);
-  min-height: 32px;
-  max-height: 32px;
-  align-items: center;
+  min-height: 38px;
+  max-height: none;
+  align-items: stretch;
   background: rgba(10, 23, 37, 0.45);
 }
 
@@ -1791,15 +2051,16 @@ textarea {
   background: transparent;
   color: #b8cee6;
   border-radius: 3px;
-  height: 30px;
-  min-height: 30px;
-  max-height: 30px;
-  padding: 0 12px;
-  white-space: nowrap;
+  min-height: 32px;
+  padding: 4px 10px;
+  white-space: normal;
+  text-align: center;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   font-size: 0.82rem;
+  line-height: 1.1;
 }
 
 .tab.active {
@@ -1808,12 +2069,49 @@ textarea {
   border-color: var(--border-strong);
 }
 
+.tab.locked,
+.tab:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+.phase-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 10, 18, 0.62);
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  z-index: 120;
+}
+
+.phase-modal {
+  width: min(540px, 100%);
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.phase-modal-head {
+  display: grid;
+  gap: 3px;
+}
+
+.phase-modal-head p {
+  margin: 0;
+}
+
+.phase-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .tab-content {
   height: 100%;
   min-height: 0;
   max-height: none;
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: visible;
   background: rgba(8, 18, 31, 0.3);
   border: 1px solid rgba(227, 237, 248, 0.22);
   border-radius: var(--radius);
@@ -1824,6 +2122,117 @@ textarea {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 9px;
+}
+
+.sync-panel {
+  grid-column: 1 / -1;
+}
+
+.sync-block {
+  display: grid;
+  gap: 6px;
+}
+
+.sync-block h5 {
+  margin: 0;
+  color: #c7daee;
+  font-size: 0.82rem;
+}
+
+.sync-empty {
+  margin: 0;
+  color: #a6bfd8;
+  font-size: 0.8rem;
+}
+
+.sync-updates {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 7px;
+}
+
+.sync-updates li {
+  border: 1px solid #42566f;
+  border-radius: var(--radius);
+  background: #112335;
+  padding: 7px;
+  display: grid;
+  gap: 3px;
+}
+
+.sync-evidence-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.sync-evidence-item {
+  border: 1px solid #42566f;
+  border-radius: var(--radius);
+  padding: 6px;
+  background: #102235;
+  display: grid;
+  gap: 5px;
+}
+
+.sync-evidence-item img {
+  width: 100%;
+  height: 110px;
+  object-fit: cover;
+  border-radius: 3px;
+}
+
+.sync-evidence-item small {
+  color: #abc3db;
+}
+
+.sync-checklist {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+
+.sync-checklist li {
+  border: 1px solid #42566f;
+  border-radius: var(--radius);
+  background: #112335;
+  padding: 7px;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sync-checklist li.done {
+  border-color: #2f8f65;
+}
+
+.sync-reports {
+  display: grid;
+  gap: 8px;
+}
+
+.sync-report-item {
+  border: 1px solid #42566f;
+  border-radius: var(--radius);
+  background: #112335;
+  padding: 8px;
+  display: grid;
+  gap: 4px;
+}
+
+.sync-report-item p {
+  margin: 0;
+}
+
+.sync-signature {
+  width: min(360px, 100%);
+  border: 1px solid #49627d;
+  border-radius: 4px;
+  background: #081320;
 }
 
 .panel {
@@ -2177,6 +2586,10 @@ th {
     max-height: none;
   }
 
+  .tabs {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .phase-rail {
     gap: 12px;
   }
@@ -2203,5 +2616,11 @@ th {
     grid-area: title;
   }
 
+}
+
+@media (max-width: 680px) {
+  .tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 </style>
