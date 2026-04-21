@@ -73,8 +73,21 @@
             <template v-if="createStep === 1">
               <label>
                 Cliente registrado
-                <select v-model="form.clientName" required @change="onCreateClientChange">
-                  <option disabled value="">Selecciona un cliente</option>
+                <select
+                  v-model="form.clientName"
+                  required
+                  :disabled="loadingCreateCatalog || createClientOptions.length === 0"
+                  @change="onCreateClientChange"
+                >
+                  <option disabled value="">
+                    {{
+                      loadingCreateCatalog
+                        ? 'Cargando clientes...'
+                        : createClientOptions.length
+                          ? 'Selecciona un cliente'
+                          : 'No hay clientes registrados'
+                    }}
+                  </option>
                   <option v-for="client in createClientOptions" :key="client" :value="client">
                     {{ client }}
                   </option>
@@ -85,15 +98,24 @@
                 <select
                   v-model="form.accountCode"
                   required
-                  :disabled="!form.clientName || createAccountOptions.length === 0"
+                  :disabled="loadingCreateCatalog || !form.clientName || createAccountOptions.length === 0"
                   @change="applyAccountByCode"
                 >
-                  <option disabled value="">Selecciona una cuenta</option>
+                  <option disabled value="">
+                    {{
+                      loadingCreateCatalog
+                        ? 'Cargando cuentas...'
+                        : createAccountOptions.length
+                          ? 'Selecciona una cuenta'
+                          : 'No hay cuentas para este cliente'
+                    }}
+                  </option>
                   <option v-for="acc in createAccountOptions" :key="acc.code" :value="acc.code">
                     {{ acc.code }} - {{ acc.accountName }}
                   </option>
                 </select>
               </label>
+              <p v-if="createCatalogError" class="wide account-helper">{{ createCatalogError }}</p>
               <p v-if="form.clientName && createAccountOptions.length === 0" class="wide account-helper">
                 Este cliente no tiene cuentas disponibles para seleccionar.
               </p>
@@ -153,11 +175,15 @@
               Este cliente tiene otras cuentas: {{ linkedAccounts.join(', ') }}.
             </p>
 
+            <p v-if="createError" class="wide sync-empty">{{ createError }}</p>
+
             <div class="form-actions wide">
               <button type="button" class="btn ghost" @click="creating = false">Cancelar</button>
               <button v-if="createStep === 2" type="button" class="btn ghost" @click="createStep = 1">Atras</button>
               <button v-if="createStep === 1" type="button" class="btn primary" @click="goToStepTwo">Siguiente</button>
-              <button v-else type="submit" class="btn primary">Guardar pedido</button>
+              <button v-else type="submit" class="btn primary" :disabled="createSaving">
+                {{ createSaving ? 'Guardando...' : 'Guardar pedido' }}
+              </button>
             </div>
           </form>
         </template>
@@ -336,8 +362,12 @@
                   <div class="summary-item"><span>Fecha visita</span><strong>{{ selectedAssignment.availableDate }}</strong></div>
                   <div class="summary-item"><span>Horario</span><strong>{{ selectedAssignment.startTime }} - {{ selectedAssignment.endTime }}</strong></div>
                   <div class="summary-item"><span>Tecnico</span><strong>{{ selectedAssignedTech?.fullName || 'Sin tecnico' }}</strong></div>
-                  <div class="summary-item"><span>DNI tecnico</span><strong>{{ selectedAssignedTech?.dni || 'Sin DNI' }}</strong></div>
                   <div class="summary-item"><span>Especialidad</span><strong>{{ selectedAssignedTech?.specialty || 'Sin especialidad' }}</strong></div>
+                  <div class="summary-item"><span>Zona base</span><strong>{{ selectedAssignedTech?.zone || 'Sin zona' }}</strong></div>
+                  <div class="summary-item">
+                    <span>Distancia cuenta-tecnico</span>
+                    <strong>{{ selectedAssignedTech?.distanceKm != null ? `${selectedAssignedTech.distanceKm.toFixed(2)} km` : 'Sin distancia' }}</strong>
+                  </div>
                   <div class="summary-item"><span>Movilidad</span><strong>S/ {{ Number(selectedAssignment.mobilityPrice || 0).toFixed(2) }}</strong></div>
                   <div class="summary-item"><span>Terceros</span><strong>S/ {{ Number(selectedAssignment.thirdPartyPrice || 0).toFixed(2) }}</strong></div>
                   <div class="summary-item"><span>Empresa terceros</span><strong>{{ selectedAssignment.thirdPartyCompany }}</strong></div>
@@ -401,6 +431,11 @@
 
               <article class="panel" v-else-if="selectedAssignment?.processOpen && selectedAssignment.step === 2">
                 <h4>Seleccion de personal recomendado</h4>
+                <p v-if="assignmentCatalogLoading" class="assignment-note">Calculando ranking por distancia...</p>
+                <p v-if="assignmentCatalogError" class="sync-empty">{{ assignmentCatalogError }}</p>
+                <p v-if="!assignmentCatalogLoading && !rankedTechs.length" class="assignment-note">
+                  No hay tecnicos con coordenadas disponibles para este pedido.
+                </p>
                 <div class="tech-grid">
                   <button
                     v-for="tech in rankedTechs"
@@ -411,15 +446,15 @@
                   >
                     <div class="tech-head">
                       <strong>{{ tech.fullName }}</strong>
-                      <span>DNI {{ tech.dni }}</span>
+                      <span>{{ tech.distanceKm != null ? `${tech.distanceKm.toFixed(2)} km` : 'Sin distancia' }}</span>
                     </div>
                     <p><strong>Especialidad:</strong> {{ tech.specialty }}</p>
-                    <p><strong>Vive en:</strong> {{ tech.homeDistrict }}</p>
-                    <p><strong>Horario:</strong> {{ tech.workSchedule }}</p>
+                    <p><strong>Zona base:</strong> {{ tech.zone }}</p>
+                    <p><strong>Motivo:</strong> {{ tech.reason }}</p>
                     <div class="score-track">
                       <span :style="{ width: `${tech.score}%` }"></span>
                     </div>
-                    <small>{{ tech.score }}% apto - {{ aptitudeLabel(tech.score) }}</small>
+                    <small>Score backend: {{ tech.score }}%</small>
                   </button>
                 </div>
                 <div class="form-actions">
@@ -459,12 +494,28 @@
 
             <section v-else-if="activeTab === 'diagnostico'" class="panel">
               <h4>Diagnostico tecnico</h4>
+              <div v-if="tecnicoReportsForSelected.length" class="sync-reports diagnostico-reports">
+                <article v-for="report in tecnicoReportsForSelected" :key="report.id" class="sync-report-item">
+                  <p><strong>Fecha:</strong> {{ report.createdAt }}</p>
+                  <p><strong>Responsable local:</strong> {{ report.responsableLocal }}</p>
+                  <p><strong>Pedido solicitado:</strong> {{ report.pedidoSolicitado }}</p>
+                  <p><strong>Observaciones:</strong> {{ report.observaciones }}</p>
+                  <p><strong>Recomendaciones:</strong> {{ report.recomendaciones }}</p>
+                  <details>
+                    <summary>Ver firma del cliente</summary>
+                    <img :src="report.firmaCliente" alt="Firma cliente" class="sync-signature" />
+                  </details>
+                </article>
+              </div>
+              <p v-else class="sync-empty">Aun no existe informe tecnico enviado para este pedido.</p>
+
               <textarea
                 v-model="selectedPedido.diagnosis"
                 rows="7"
                 placeholder="Describe causa raiz, evidencia y plan de accion"
               ></textarea>
-              <button class="btn primary" @click="pushHistory('Diagnostico actualizado')">
+              <p v-if="diagnosticoError" class="sync-empty">{{ diagnosticoError }}</p>
+              <button class="btn primary" :disabled="diagnosticoSaving" @click="saveDiagnostico">
                 Guardar diagnostico
               </button>
             </section>
@@ -587,8 +638,22 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue';
+import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { useTecnicoBridgeStore } from '../stores/tecnicoBridgeStore';
+import {
+  type ApiCliente,
+  type ApiCuenta,
+  type ApiTecnico,
+  type ApiRecomendacionTecnicoItem,
+  createCliente,
+  createCuenta,
+  createPedido as createPedidoApi,
+  listClientes,
+  listCuentas,
+  listTecnicos,
+  recomendarTecnico,
+  updateCuenta,
+} from '../../services/pedidosService';
 
 type PhaseKey = 'deteccion' | 'asignacion' | 'cierre' | 'facturacion';
 type TabKey = 'detalles' | 'historial' | 'asignacion' | 'diagnostico' | 'costos';
@@ -636,13 +701,14 @@ interface PedidoItem {
   };
 }
 
-interface TechnicianProfile {
+interface RankedTechProfile {
   id: string;
   fullName: string;
-  dni: string;
   specialty: string;
-  homeDistrict: string;
-  workSchedule: string;
+  zone: string;
+  distanceKm: number | null;
+  score: number;
+  reason: string;
 }
 
 interface EppItem {
@@ -669,20 +735,6 @@ interface AssignmentDraft {
   registeredAt: string;
 }
 
-interface AccountCatalogItem {
-  code: string;
-  clientName: string;
-  accountName: string;
-  contactName: string;
-  referenceAddress: string;
-  district: string;
-  coordinates: string;
-  documentNumber: string;
-  contactPhone: string;
-  contactEmail: string;
-  defaultService: string;
-}
-
 const phaseLabel: Record<PhaseKey, string> = {
   deteccion: 'Deteccion',
   asignacion: 'Asignacion',
@@ -701,61 +753,6 @@ const workflowPhases = [
 
 const phaseFilters = [{ key: 'all', label: 'Todos' }, ...workflowPhases.map((p) => ({ key: p.key, label: p.label }))];
 
-const accountCatalog: AccountCatalogItem[] = [
-  {
-    code: 'CUE-1001',
-    clientName: 'Clinica Miraflores',
-    accountName: 'Sede Principal',
-    contactName: 'Laura Medina',
-    referenceAddress: 'Av. Arequipa 1001, frente a farmacia central',
-    district: 'Miraflores',
-    coordinates: '-12.1211, -77.0297',
-    documentNumber: '20548796321',
-    contactPhone: '987 123 111',
-    contactEmail: 'laura.medina@clinicamf.pe',
-    defaultService: 'Mantenimiento electrico integral',
-  },
-  {
-    code: 'CUE-1002',
-    clientName: 'Clinica Miraflores',
-    accountName: 'Sede Emergencias',
-    contactName: 'Pedro Chavez',
-    referenceAddress: 'Jr. Las Flores 221, torre 2',
-    district: 'La Molina',
-    coordinates: '-12.0749, -76.9512',
-    documentNumber: '20548796321',
-    contactPhone: '987 123 222',
-    contactEmail: 'pedro.chavez@clinicamf.pe',
-    defaultService: 'Mantenimiento de UPS y tableros',
-  },
-  {
-    code: 'CUE-2001',
-    clientName: 'Condominio Brisas',
-    accountName: 'Torre A',
-    contactName: 'Marta Solis',
-    referenceAddress: 'Calle Parque Norte 450',
-    district: 'Surco',
-    coordinates: '-12.1405, -76.9910',
-    documentNumber: '20600154789',
-    contactPhone: '965 774 100',
-    contactEmail: 'administracion@brisas.pe',
-    defaultService: 'Reparacion de bombas de agua',
-  },
-  {
-    code: 'CUE-3001',
-    clientName: 'Retail Norte SAC',
-    accountName: 'Local San Isidro',
-    contactName: 'Rosa Calderon',
-    referenceAddress: 'Av. Rivera Navarrete 3201',
-    district: 'San Isidro',
-    coordinates: '-12.0962, -77.0307',
-    documentNumber: '20114589632',
-    contactPhone: '955 441 990',
-    contactEmail: 'soporte@retailnorte.com',
-    defaultService: 'Cableado estructurado piso 3',
-  },
-];
-
 const commonServices = [
   'Mantenimiento electrico integral',
   'Mantenimiento de UPS y tableros',
@@ -773,41 +770,6 @@ const tabs: Array<{ key: TabKey; label: string }> = [
   { key: 'costos', label: 'Costos' },
 ];
 
-const techniciansCatalog: TechnicianProfile[] = [
-  {
-    id: 'tec-1',
-    fullName: 'Luis Rojas Alvarado',
-    dni: '45874521',
-    specialty: 'Electrico industrial',
-    homeDistrict: 'Miraflores',
-    workSchedule: '08:00 - 17:00',
-  },
-  {
-    id: 'tec-2',
-    fullName: 'Carlos Palacios Vera',
-    dni: '47221850',
-    specialty: 'UPS y tableros',
-    homeDistrict: 'La Molina',
-    workSchedule: '09:00 - 18:00',
-  },
-  {
-    id: 'tec-3',
-    fullName: 'Martha Pino Cardenas',
-    dni: '43661772',
-    specialty: 'Cableado estructurado',
-    homeDistrict: 'San Isidro',
-    workSchedule: '07:30 - 16:30',
-  },
-  {
-    id: 'tec-4',
-    fullName: 'Jorge Saldana Quispe',
-    dni: '48977534',
-    specialty: 'Bombas y sistemas hidraulicos',
-    homeDistrict: 'Surco',
-    workSchedule: '08:00 - 17:00',
-  },
-];
-
 const eppCatalog: EppItem[] = [
   { id: 'epp-1', name: 'Casco dielctrico', stock: 34, category: 'Proteccion cabeza' },
   { id: 'epp-2', name: 'Guantes dielctricos', stock: 52, category: 'Proteccion manos' },
@@ -816,252 +778,7 @@ const eppCatalog: EppItem[] = [
   { id: 'epp-5', name: 'Botas punta de acero', stock: 27, category: 'Proteccion pies' },
 ];
 
-const pedidos = ref<PedidoItem[]>([
-  {
-    id: '1',
-    code: 'OT-1084',
-    accountCode: 'CUE-1001',
-    client: 'Clinica Miraflores',
-    contactName: 'Laura Medina',
-    referenceAddress: 'Av. Arequipa 1001, frente a farmacia central',
-    district: 'Miraflores',
-    coordinates: '-12.1211, -77.0297',
-    documentNumber: '20548796321',
-    contactPhone: '987 123 111',
-    contactEmail: 'laura.medina@clinicamf.pe',
-    urgent: false,
-    service: 'Mantenimiento electrico integral',
-    status: 'En proceso',
-    phase: 'asignacion',
-    priority: 'alta',
-    date: '2026-03-22',
-    tech: 'Luis Rojas',
-    diagnosis: 'Se detecta sobrecarga en tablero secundario y cableado deteriorado.',
-    history: [
-      { when: '24 Mar 11:10', note: 'Validacion de materiales completada.' },
-      { when: '24 Mar 10:46', note: 'Asignacion confirmada a Luis Rojas.' },
-      { when: '24 Mar 10:20', note: 'Cliente confirma ventana de atencion de 2:00 p.m. a 4:00 p.m.' },
-      { when: '24 Mar 09:55', note: 'Se adjunta evidencia fotografica del tablero secundario.' },
-      { when: '23 Mar 18:30', note: 'Se solicita prueba termografica con tercero.' },
-      { when: '23 Mar 16:12', note: 'Diagnostico preliminar registrado por tecnico.' },
-      { when: '22 Mar 09:10', note: 'Visita tecnica preliminar coordinada.' },
-      { when: '22 Mar 08:21', note: 'Pedido creado por mesa de ayuda.' },
-    ],
-    costs: {
-      total: 4280,
-      direct: 3720,
-      absorbed: 560,
-      margin: 19,
-      materials: 2200,
-      mobility: 180,
-      thirdParties: 640,
-      tech: 1260,
-      lines: [
-        { type: 'Material', name: 'Interruptor termomagnetico', qty: 2, unit: 280, amount: 560 },
-        { type: 'Material', name: 'Cable NYY 3x10', qty: 35, unit: 22, amount: 770 },
-        { type: 'Movilidad', name: 'Traslado tecnico', qty: 1, unit: 180, amount: 180 },
-        { type: 'Tecnico', name: 'HH tecnico campo', qty: 9, unit: 140, amount: 1260 },
-        { type: 'Terceros', name: 'Prueba termografica', qty: 1, unit: 640, amount: 640, pending: true },
-      ],
-    },
-  },
-  {
-    id: '2',
-    code: 'OT-1085',
-    accountCode: 'CUE-2001',
-    client: 'Condominio Brisas',
-    contactName: 'Marta Solis',
-    referenceAddress: 'Calle Parque Norte 450',
-    district: 'Surco',
-    coordinates: '-12.1405, -76.9910',
-    documentNumber: '20600154789',
-    contactPhone: '965 774 100',
-    contactEmail: 'administracion@brisas.pe',
-    urgent: false,
-    service: 'Reparacion de bombas de agua',
-    status: 'Pendiente',
-    phase: 'deteccion',
-    priority: 'media',
-    date: '2026-03-23',
-    diagnosis: 'Requiere inspeccion de tablero de control y valvulas de retencion.',
-    history: [{ when: '23 Mar 10:45', note: 'Cliente reporta falla intermitente en bomba principal.' }],
-    costs: {
-      total: 2650,
-      direct: 2190,
-      absorbed: 460,
-      margin: 15,
-      materials: 1320,
-      mobility: 210,
-      thirdParties: 320,
-      tech: 800,
-      lines: [
-        { type: 'Material', name: 'Kit sello mecanico', qty: 1, unit: 690, amount: 690 },
-        { type: 'Material', name: 'Valvula check 2"', qty: 2, unit: 315, amount: 630 },
-        { type: 'Tecnico', name: 'HH tecnico especialista', qty: 5, unit: 160, amount: 800 },
-        { type: 'Movilidad', name: 'Traslado y carga', qty: 1, unit: 210, amount: 210 },
-        { type: 'Terceros', name: 'Balanceo de rotor', qty: 1, unit: 320, amount: 320 },
-      ],
-    },
-  },
-  {
-    id: '3',
-    code: 'OT-1081',
-    accountCode: 'CUE-3001',
-    client: 'Retail Norte SAC',
-    contactName: 'Rosa Calderon',
-    referenceAddress: 'Av. Rivera Navarrete 3201',
-    district: 'San Isidro',
-    coordinates: '-12.0962, -77.0307',
-    documentNumber: '20114589632',
-    contactPhone: '955 441 990',
-    contactEmail: 'soporte@retailnorte.com',
-    urgent: false,
-    service: 'Cableado estructurado piso 3',
-    status: 'Por facturar',
-    phase: 'facturacion',
-    priority: 'baja',
-    date: '2026-03-19',
-    tech: 'Martha Pino',
-    diagnosis: 'Instalacion culminada, pendiente conformidad administrativa.',
-    history: [
-      { when: '19 Mar 14:10', note: 'Pedido creado y validado con compras.' },
-      { when: '20 Mar 16:30', note: 'Trabajo ejecutado y cliente conforme.' },
-      { when: '21 Mar 11:02', note: 'Pendiente emision de factura.' },
-    ],
-    costs: {
-      total: 5170,
-      direct: 4470,
-      absorbed: 700,
-      margin: 22,
-      materials: 2850,
-      mobility: 120,
-      thirdParties: 540,
-      tech: 1660,
-      lines: [
-        { type: 'Material', name: 'Patch panel 48 puertos', qty: 2, unit: 460, amount: 920 },
-        { type: 'Material', name: 'Cable UTP Cat6', qty: 9, unit: 185, amount: 1665 },
-        { type: 'Tecnico', name: 'HH cuadrilla cableado', qty: 10, unit: 166, amount: 1660 },
-        { type: 'Terceros', name: 'Certificacion puntos', qty: 1, unit: 540, amount: 540 },
-        { type: 'Movilidad', name: 'Traslado de materiales', qty: 1, unit: 120, amount: 120 },
-      ],
-    },
-  },
-  {
-    id: '4',
-    code: 'OT-1090',
-    accountCode: 'CUE-1002',
-    client: 'Clinica Miraflores',
-    contactName: 'Pedro Chavez',
-    referenceAddress: 'Jr. Las Flores 221, torre 2',
-    district: 'La Molina',
-    coordinates: '-12.0749, -76.9512',
-    documentNumber: '20548796321',
-    contactPhone: '987 123 222',
-    contactEmail: 'pedro.chavez@clinicamf.pe',
-    urgent: true,
-    service: 'Mantenimiento de UPS y tableros',
-    status: 'En proceso',
-    phase: 'cierre',
-    priority: 'critica',
-    date: '2026-03-24',
-    tech: 'Carlos Palacios',
-    diagnosis: 'Bateria en degradacion acelerada, se recomienda reemplazo parcial.',
-    history: [
-      { when: '24 Mar 13:10', note: 'Informe de cierre enviado al cliente.' },
-      { when: '24 Mar 11:42', note: 'Prueba de autonomia completada.' },
-      { when: '24 Mar 09:05', note: 'Pedido marcado como urgente por cliente.' },
-    ],
-    costs: {
-      total: 6120,
-      direct: 5280,
-      absorbed: 840,
-      margin: 21,
-      materials: 3610,
-      mobility: 140,
-      thirdParties: 430,
-      tech: 1100,
-      lines: [
-        { type: 'Material', name: 'Bateria UPS 12V', qty: 8, unit: 320, amount: 2560 },
-        { type: 'Tecnico', name: 'HH tecnico electrico', qty: 8, unit: 138, amount: 1104 },
-        { type: 'Terceros', name: 'Gestion de residuos', qty: 1, unit: 430, amount: 430 },
-      ],
-    },
-  },
-  {
-    id: '5',
-    code: 'OT-1091',
-    accountCode: 'CUE-2001',
-    client: 'Condominio Brisas',
-    contactName: 'Marta Solis',
-    referenceAddress: 'Calle Parque Norte 450',
-    district: 'Surco',
-    coordinates: '-12.1405, -76.9910',
-    documentNumber: '20600154789',
-    contactPhone: '965 774 100',
-    contactEmail: 'administracion@brisas.pe',
-    urgent: false,
-    service: 'Instalacion de luminarias',
-    status: 'Pendiente',
-    phase: 'deteccion',
-    priority: 'media',
-    date: '2026-03-24',
-    diagnosis: 'Se reportan 12 puntos de luz apagados en sotano.',
-    history: [{ when: '24 Mar 09:02', note: 'Pedido generado desde inspeccion preventiva.' }],
-    costs: {
-      total: 1680,
-      direct: 1470,
-      absorbed: 210,
-      margin: 12,
-      materials: 970,
-      mobility: 120,
-      thirdParties: 0,
-      tech: 380,
-      lines: [
-        { type: 'Material', name: 'Luminaria LED 24W', qty: 12, unit: 62, amount: 744 },
-        { type: 'Tecnico', name: 'HH tecnico campo', qty: 3, unit: 126, amount: 378 },
-      ],
-    },
-  },
-  {
-    id: '6',
-    code: 'OT-1092',
-    accountCode: 'CUE-3001',
-    client: 'Retail Norte SAC',
-    contactName: 'Rosa Calderon',
-    referenceAddress: 'Av. Rivera Navarrete 3201',
-    district: 'San Isidro',
-    coordinates: '-12.0962, -77.0307',
-    documentNumber: '20114589632',
-    contactPhone: '955 441 990',
-    contactEmail: 'soporte@retailnorte.com',
-    urgent: false,
-    service: 'Soporte de infraestructura',
-    status: 'Por facturar',
-    phase: 'facturacion',
-    priority: 'baja',
-    date: '2026-03-18',
-    tech: 'Martha Pino',
-    diagnosis: 'Incidencia cerrada, pendiente envio de conformidad.',
-    history: [
-      { when: '23 Mar 15:40', note: 'Conformidad tecnica aprobada.' },
-      { when: '21 Mar 12:15', note: 'Trabajo finalizado sin observaciones.' },
-    ],
-    costs: {
-      total: 2890,
-      direct: 2440,
-      absorbed: 450,
-      margin: 18,
-      materials: 950,
-      mobility: 110,
-      thirdParties: 280,
-      tech: 1100,
-      lines: [
-        { type: 'Tecnico', name: 'HH soporte campo', qty: 7, unit: 157, amount: 1099 },
-        { type: 'Material', name: 'Canaleta PVC', qty: 18, unit: 26, amount: 468 },
-      ],
-    },
-  },
-]);
+const pedidos = ref<PedidoItem[]>([]);
 
 const tecnicoBridge = useTecnicoBridgeStore();
 const allPedidos = computed(() => tecnicoBridge.mergeWithCoordinatorPedidos(pedidos.value));
@@ -1083,6 +800,18 @@ const searchQuery = ref('');
 const showPhaseModal = ref(false);
 const phaseModalTarget = ref<PhaseKey | ''>('');
 const phaseModalSustento = ref('');
+const diagnosticoSaving = ref(false);
+const diagnosticoError = ref('');
+const createSaving = ref(false);
+const createError = ref('');
+const loadingCreateCatalog = ref(false);
+const createCatalogError = ref('');
+const createClientesCatalog = ref<ApiCliente[]>([]);
+const createCuentasCatalog = ref<ApiCuenta[]>([]);
+const assignmentCatalogLoading = ref(false);
+const assignmentCatalogError = ref('');
+const assignmentTecnicosCatalog = ref<ApiTecnico[]>([]);
+const assignmentRankingByPedido = reactive<Record<string, ApiRecomendacionTecnicoItem[]>>({});
 
 const form = reactive({
   accountCode: '',
@@ -1101,26 +830,42 @@ const form = reactive({
 
 const assignmentByPedido = reactive<Record<string, AssignmentDraft>>({});
 
+const selectedClient = computed(() => {
+  const selectedName = form.clientName.trim().toLowerCase();
+  if (!selectedName) return null;
+  return createClientesCatalog.value.find((cliente) => cliente.nombre.trim().toLowerCase() === selectedName) || null;
+});
+
 const selectedAccount = computed(() => {
   const code = form.accountCode.trim().toUpperCase();
-  return accountCatalog.find((acc) => acc.code === code) || null;
+  const selectedClientId = selectedClient.value?.id;
+  if (!code || !selectedClientId) return null;
+  return createCuentasCatalog.value.find(
+    (cuenta) => cuenta.cliente === selectedClientId && cuenta.numero.trim().toUpperCase() === code
+  ) || null;
 });
 
 const createClientOptions = computed(() => {
-  const clients = new Set(accountCatalog.map((acc) => acc.clientName));
+  const clients = new Set(createClientesCatalog.value.map((cliente) => cliente.nombre));
   return Array.from(clients).sort((a, b) => a.localeCompare(b, 'es'));
 });
 
 const createAccountOptions = computed(() => {
-  const clientName = form.clientName.trim();
-  if (!clientName) return [];
-  return accountCatalog.filter((acc) => acc.clientName === clientName);
+  const selectedClientId = selectedClient.value?.id;
+  if (!selectedClientId) return [];
+
+  return createCuentasCatalog.value
+    .filter((cuenta) => cuenta.cliente === selectedClientId)
+    .map((cuenta) => ({
+      code: cuenta.numero.trim().toUpperCase(),
+      accountName: cuenta.nombre,
+    }));
 });
 
 const linkedAccounts = computed(() => {
   if (!selectedAccount.value) return [];
-  return accountCatalog
-    .filter((acc) => acc.clientName === selectedAccount.value?.clientName && acc.code !== selectedAccount.value?.code)
+  return createAccountOptions.value
+    .filter((acc) => acc.code !== selectedAccount.value?.numero.trim().toUpperCase())
     .map((acc) => `${acc.code} (${acc.accountName})`);
 });
 
@@ -1137,6 +882,20 @@ const filteredPedidos = computed(() => {
     );
   });
 });
+
+watch(
+  allPedidos,
+  (next) => {
+    if (!next.length) {
+      selectedId.value = '';
+      return;
+    }
+
+    const exists = next.some((pedido) => pedido.id === selectedId.value);
+    if (!exists) selectedId.value = next[0].id;
+  },
+  { immediate: true }
+);
 
 const selectedPedido = computed(() => allPedidos.value.find((p) => p.id === selectedId.value));
 const tecnicoUpdatesForSelected = computed(() => {
@@ -1189,18 +948,29 @@ const canGoTechStep = computed(() => {
 });
 
 const rankedTechs = computed(() => {
-  if (!selectedPedido.value || !selectedAssignment.value) return [];
-  return techniciansCatalog
-    .map((tech) => ({
-      ...tech,
-      score: calculateTechScore(selectedPedido.value!, tech, selectedAssignment.value!),
-    }))
-    .sort((a, b) => b.score - a.score);
+  if (!selectedPedido.value) return [];
+
+  const ranking = assignmentRankingByPedido[selectedPedido.value.id] || [];
+  if (!ranking.length) return [];
+
+  return ranking.map((item): RankedTechProfile => {
+    const tecnico = assignmentTecnicosCatalog.value.find((entry) => entry.id === item.id);
+    const reason = item.motivos?.length ? item.motivos.join(', ') : 'Sin motivo';
+    return {
+      id: item.id,
+      fullName: tecnico?.nombre || item.nombre,
+      specialty: tecnico?.especialidad || 'Sin especialidad',
+      zone: tecnico?.zona || 'Sin zona',
+      distanceKm: item.distancia_km,
+      score: item.score,
+      reason,
+    };
+  });
 });
 
 const selectedAssignedTech = computed(() => {
   if (!selectedAssignment.value?.selectedTechId) return null;
-  return techniciansCatalog.find((tech) => tech.id === selectedAssignment.value?.selectedTechId) || null;
+  return rankedTechs.value.find((tech) => tech.id === selectedAssignment.value?.selectedTechId) || null;
 });
 
 const selectedEppNames = computed(() => {
@@ -1308,30 +1078,29 @@ function openAssignmentProcess() {
   }
   selectedAssignment.value.processOpen = true;
   selectedAssignment.value.step = 1;
+  void loadAssignmentCatalogAndRanking(selectedPedido.value.id);
 }
 
-function aptitudeLabel(score: number) {
-  if (score >= 85) return 'Muy recomendado';
-  if (score >= 70) return 'Recomendado';
-  if (score >= 55) return 'Aceptable';
-  return 'Baja afinidad';
-}
+async function loadAssignmentCatalogAndRanking(pedidoId: string) {
+  assignmentCatalogLoading.value = true;
+  assignmentCatalogError.value = '';
 
-function calculateTechScore(pedido: PedidoItem, tech: TechnicianProfile, draft: AssignmentDraft) {
-  const text = `${pedido.service} ${pedido.diagnosis}`.toLowerCase();
-  const specialty = tech.specialty.toLowerCase();
-  let score = 35;
+  try {
+    if (!assignmentTecnicosCatalog.value.length) {
+      const tecnicos = await listTecnicos({ activo: true });
+      assignmentTecnicosCatalog.value = tecnicos;
+    }
 
-  if (text.includes('electr') && specialty.includes('electr')) score += 28;
-  if (text.includes('ups') && specialty.includes('ups')) score += 28;
-  if (text.includes('cable') && specialty.includes('cable')) score += 28;
-  if ((text.includes('bomba') || text.includes('hidraul')) && specialty.includes('bomba')) score += 28;
-
-  if ((pedido.district || '').toLowerCase().includes(tech.homeDistrict.toLowerCase())) score += 16;
-  if (draft.startTime >= '08:00' && draft.endTime <= '18:30') score += 10;
-  if (pedido.urgent) score += 6;
-
-  return Math.max(35, Math.min(98, score));
+    const recommendation = await recomendarTecnico(pedidoId);
+    assignmentRankingByPedido[pedidoId] = recommendation.ranking || [];
+  } catch (error) {
+    assignmentRankingByPedido[pedidoId] = [];
+    assignmentCatalogError.value = error instanceof Error
+      ? error.message
+      : 'No se pudo cargar el ranking de tecnicos desde backend.';
+  } finally {
+    assignmentCatalogLoading.value = false;
+  }
 }
 
 function selectTechnician(techId: string) {
@@ -1365,27 +1134,29 @@ function registerVisit() {
   draft.processOpen = false;
 
   pushHistory(
-    `Visita registrada con ${tech.fullName} (${tech.dni}). EPPs: ${selectedEppNames.value.join(', ') || 'sin EPPs'}`
+    `Visita registrada con ${tech.fullName}. EPPs: ${selectedEppNames.value.join(', ') || 'sin EPPs'}`
   );
 }
 
 function applyAccountByCode() {
   const account = selectedAccount.value;
-  if (!account) {
+  const client = selectedClient.value;
+
+  if (!account || !client) {
     clearCreateAccountFields();
     return;
   }
 
-  form.accountCode = account.code;
-  form.clientName = account.clientName;
-  form.contactName = account.contactName;
-  form.referenceAddress = account.referenceAddress;
-  form.district = account.district;
-  form.coordinates = account.coordinates;
-  form.documentNumber = account.documentNumber;
-  form.contactPhone = account.contactPhone;
-  form.contactEmail = account.contactEmail;
-  if (!form.service.trim()) form.service = account.defaultService;
+  form.accountCode = account.numero.trim().toUpperCase();
+  form.clientName = client.nombre;
+  form.contactName = account.contacto.trim() || form.contactName.trim() || client.nombre;
+  form.referenceAddress = account.direccion.trim() || client.direccion.trim();
+  form.district = account.distrito.trim();
+  form.coordinates = `${account.latitud}, ${account.longitud}`;
+  form.documentNumber = client.documento.trim();
+  form.contactPhone = account.telefono.trim() || client.telefono.trim();
+  form.contactEmail = client.correo.trim();
+  if (!form.service.trim()) form.service = account.nombre.trim() || commonServices[0];
 }
 
 function clearCreateAccountFields() {
@@ -1400,7 +1171,47 @@ function clearCreateAccountFields() {
 
 function onCreateClientChange() {
   form.accountCode = '';
-  clearCreateAccountFields();
+  const client = selectedClient.value;
+  if (!client) {
+    clearCreateAccountFields();
+    return;
+  }
+
+  form.contactName = client.nombre;
+  form.referenceAddress = client.direccion.trim();
+  form.documentNumber = client.documento.trim();
+  form.contactPhone = client.telefono.trim();
+  form.contactEmail = client.correo.trim();
+}
+
+function parseCoordinateInput(raw: string) {
+  const [latRaw, lonRaw] = raw.split(',').map((part) => part.trim());
+  const lat = Number(latRaw);
+  const lon = Number(lonRaw);
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  if (lat < -90 || lat > 90) return null;
+  if (lon < -180 || lon > 180) return null;
+  return { lat, lon };
+}
+
+async function loadCreateCatalog() {
+  loadingCreateCatalog.value = true;
+  createCatalogError.value = '';
+
+  try {
+    const [clientes, cuentas] = await Promise.all([listClientes(), listCuentas()]);
+    createClientesCatalog.value = clientes.filter((cliente) => cliente.activo);
+    createCuentasCatalog.value = cuentas.filter((cuenta) => cuenta.activa);
+  } catch (error) {
+    createClientesCatalog.value = [];
+    createCuentasCatalog.value = [];
+    createCatalogError.value = error instanceof Error
+      ? error.message
+      : 'No se pudo cargar clientes y cuentas desde backend.';
+  } finally {
+    loadingCreateCatalog.value = false;
+  }
 }
 
 function goToStepTwo() {
@@ -1416,6 +1227,14 @@ function goToStepTwo() {
     && form.contactEmail.trim()
   );
   if (!stepOneValid) return;
+
+  const parsed = parseCoordinateInput(form.coordinates);
+  if (!parsed) {
+    createError.value = 'Las coordenadas deben tener formato "latitud, longitud" con valores validos.';
+    return;
+  }
+
+  createError.value = '';
   createStep.value = 2;
 }
 
@@ -1446,11 +1265,30 @@ function pushHistory(note: string) {
   selectedPedido.value.history.unshift({ when: stamp, note });
 }
 
-function openCreate() {
+async function saveDiagnostico() {
+  if (!selectedPedido.value || !selectedPedido.value.diagnosis.trim()) return;
+
+  diagnosticoSaving.value = true;
+  diagnosticoError.value = '';
+
+  try {
+    await tecnicoBridge.updateDiagnostico(selectedPedido.value.id, selectedPedido.value.diagnosis.trim());
+    pushHistory('Diagnostico actualizado');
+  } catch (error) {
+    diagnosticoError.value = error instanceof Error ? error.message : 'No se pudo guardar el diagnostico.';
+  } finally {
+    diagnosticoSaving.value = false;
+  }
+}
+
+async function openCreate() {
   resetCreateForm();
+  createError.value = '';
+  createCatalogError.value = '';
   creating.value = true;
   createStep.value = 1;
   activeTab.value = 'detalles';
+  await loadCreateCatalog();
 }
 
 function resetCreateForm() {
@@ -1468,49 +1306,101 @@ function resetCreateForm() {
   form.urgent = false;
 }
 
-function createPedido() {
-  if (!form.service.trim()) return;
-  const nextNumber = 1086 + allPedidos.value.length;
-  const newPedido: PedidoItem = {
-    id: String(Date.now()),
-    code: `OT-${nextNumber}`,
-    accountCode: form.accountCode,
-    client: form.clientName,
-    contactName: form.contactName,
-    referenceAddress: form.referenceAddress,
-    district: form.district,
-    coordinates: form.coordinates,
-    documentNumber: form.documentNumber,
-    contactPhone: form.contactPhone,
-    contactEmail: form.contactEmail,
-    urgent: form.urgent,
-    service: form.service,
-    status: 'Pendiente',
-    phase: 'deteccion',
-    priority: form.urgent ? 'critica' : 'media',
-    date: new Date().toISOString().slice(0, 10),
-    diagnosis: form.problemDescription || 'Sin info adicional.',
-    history: [{ when: 'Ahora', note: `Cuenta ${form.accountCode || 'SIN-CODIGO'} - ${form.contactName} (${form.contactPhone})` }],
-    costs: {
-      total: 0,
-      direct: 0,
-      absorbed: 0,
-      margin: 0,
-      materials: 0,
-      mobility: 0,
-      thirdParties: 0,
-      tech: 0,
-      lines: [],
-    },
+async function ensureClienteForForm() {
+  const nombre = form.clientName.trim();
+  const documento = form.documentNumber.trim();
+  const telefono = form.contactPhone.trim();
+  const correo = form.contactEmail.trim();
+  const direccion = form.referenceAddress.trim();
+
+  const found = await listClientes({ search: nombre });
+  const existing = found.find((cliente) => {
+    const sameName = cliente.nombre.trim().toLowerCase() === nombre.toLowerCase();
+    const sameDocumento = !documento || cliente.documento.trim() === documento;
+    return sameName && sameDocumento;
+  });
+
+  if (existing) return existing;
+
+  return createCliente({
+    nombre,
+    documento,
+    telefono,
+    correo,
+    direccion,
+  });
+}
+
+async function ensureCuentaForCliente(clienteId: string) {
+  const numero = form.accountCode.trim().toUpperCase();
+  const search = numero || form.clientName.trim();
+  const found = await listCuentas({ cliente: clienteId, search });
+  const existing = found.find((cuenta) => cuenta.numero.trim().toUpperCase() === numero);
+
+  const parsed = parseCoordinateInput(form.coordinates);
+  if (!parsed) {
+    throw new Error('No se pudieron interpretar las coordenadas de la cuenta.');
+  }
+
+  const cuentaPayload = {
+    direccion: form.referenceAddress.trim(),
+    distrito: form.district.trim(),
+    contacto: form.contactName.trim(),
+    telefono: form.contactPhone.trim(),
+    latitud: parsed.lat,
+    longitud: parsed.lon,
+    activa: true,
   };
 
-  pedidos.value.unshift(newPedido);
-  selectedId.value = newPedido.id;
-  creating.value = false;
-  createStep.value = 1;
-  activeTab.value = 'detalles';
+  if (existing) {
+    return updateCuenta(existing.id, cuentaPayload);
+  }
 
-  resetCreateForm();
+  return createCuenta({
+    cliente: clienteId,
+    nombre: numero,
+    numero,
+    ...cuentaPayload,
+    tipo: 'empresa',
+  });
+}
+
+async function createPedido() {
+  if (!form.service.trim()) return;
+
+  createSaving.value = true;
+  createError.value = '';
+
+  try {
+    const cliente = await ensureClienteForForm();
+    const cuenta = await ensureCuentaForCliente(cliente.id);
+    const service = form.service.trim();
+    const problem = form.problemDescription.trim();
+
+    const created = await createPedidoApi({
+      cliente: cliente.id,
+      cuenta: cuenta.id,
+      titulo: `${service} - ${cliente.nombre}`,
+      descripcion: problem || `Contacto: ${form.contactName.trim()} (${form.contactPhone.trim()})`,
+      tipo_servicio: service,
+      zona: form.district.trim() || 'Sin zona',
+      prioridad: form.urgent ? 'critica' : 'media',
+      diagnostico_tecnico: problem,
+    });
+
+    await tecnicoBridge.hydrateFromApi(true);
+    selectedId.value = String(created.id);
+    creating.value = false;
+    createStep.value = 1;
+    activeTab.value = 'detalles';
+    resetCreateForm();
+  } catch (error) {
+    createError.value = error instanceof Error
+      ? error.message
+      : 'No se pudo crear el pedido. Verifica tus datos e intenta nuevamente.';
+  } finally {
+    createSaving.value = false;
+  }
 }
 
 function recalculateCosts() {
@@ -1520,6 +1410,14 @@ function recalculateCosts() {
   selectedPedido.value.costs.margin = Math.max(8, Math.min(34, selectedPedido.value.costs.margin + 1));
   pushHistory('Snapshot de costos recalculado');
 }
+
+onMounted(async () => {
+  try {
+    await Promise.all([tecnicoBridge.hydrateFromApi(), loadCreateCatalog()]);
+  } catch {
+    // The technical views surface synchronization issues in their own panels.
+  }
+});
 </script>
 
 <style scoped>

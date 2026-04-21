@@ -1,8 +1,8 @@
-from rest_framework import serializers
+from apps.core.serializers import MongoModelSerializer
 from .models import Tecnico
 
 
-class TecnicoSerializer(serializers.ModelSerializer):
+class TecnicoSerializer(MongoModelSerializer):
     class Meta:
         model = Tecnico
         fields = "__all__"

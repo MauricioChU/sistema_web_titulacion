@@ -1,0 +1,17 @@
+# Local Python virtual environments
+backend/.venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Local IDE settings
+.vscode/
+
+# Django local/runtime files
+backend/.env
+backend/db.sqlite3
+backend/media/
+
+# Local Mongo dump/cache
+backend/.mongodb/

@@ -7,5 +7,5 @@ class CuentaViewSet(ModelViewSet):
     queryset = Cuenta.objects.select_related("cliente").all()
     serializer_class = CuentaSerializer
     filterset_fields = ["cliente", "tipo", "activa"]
-    search_fields = ["nombre", "numero", "cliente__nombre"]
+    search_fields = ["nombre", "numero", "direccion", "distrito", "cliente__nombre"]
     ordering_fields = ["nombre", "created_at"]

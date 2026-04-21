@@ -10,18 +10,18 @@
       </div>
 
       <h2>Ingresar</h2>
-      <p class="hint">Usuario: admin / Clave: admin123</p>
+      <p class="hint">Demo: admin/admin123 o tecnico/tecnico123</p>
 
       <form @submit.prevent="submit" class="form">
         <label>
           Usuario
-          <input v-model.trim="user" type="text" autocomplete="username" />
+          <input v-model.trim="user" type="text" autocomplete="username" :disabled="isSubmitting" />
         </label>
         <label>
           Clave
-          <input v-model="pass" type="password" autocomplete="current-password" />
+          <input v-model="pass" type="password" autocomplete="current-password" :disabled="isSubmitting" />
         </label>
-        <button type="submit">Entrar</button>
+        <button type="submit" :disabled="isSubmitting">{{ isSubmitting ? 'Validando...' : 'Entrar' }}</button>
         <p v-if="error" class="error">{{ error }}</p>
       </form>
     </div>
@@ -30,21 +30,31 @@
 
 <script setup lang="ts">
 import { ref } from 'vue';
+import { login } from '../../services/authService';
+import type { SessionUser } from '../../services/session';
 
-const emit = defineEmits<{ (e: 'login-ok'): void }>();
+const emit = defineEmits<{ (e: 'login-ok', user: SessionUser): void }>();
 const user = ref('admin');
 const pass = ref('admin123');
 const error = ref('');
+const isSubmitting = ref(false);
 
-function submit() {
-  if (user.value === 'admin' && pass.value === 'admin123') {
-    localStorage.setItem('prointel_mock_auth', '1');
-    localStorage.setItem('prointel_mock_user', user.value);
-    error.value = '';
-    emit('login-ok');
+async function submit() {
+  if (!user.value.trim() || !pass.value) {
+    error.value = 'Completa usuario y clave.';
     return;
   }
-  error.value = 'Credenciales invalidas';
+
+  isSubmitting.value = true;
+  try {
+    const authUser = await login(user.value.trim(), pass.value);
+    error.value = '';
+    emit('login-ok', authUser);
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : 'No se pudo iniciar sesion.';
+  } finally {
+    isSubmitting.value = false;
+  }
 }
 </script>
 

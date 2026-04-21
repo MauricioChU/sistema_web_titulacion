@@ -3,15 +3,15 @@ import os
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-only-secret-key-change-me")
+SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-only-secret-key-change-me-please-1234567890")
 DEBUG = os.getenv("DJANGO_DEBUG", "true").lower() == "true"
 ALLOWED_HOSTS = os.getenv("DJANGO_ALLOWED_HOSTS", "*").split(",")
 
 INSTALLED_APPS = [
-    "django.contrib.admin",
-    "django.contrib.auth",
-    "django.contrib.contenttypes",
-    "django.contrib.sessions",
+    "apps.core.mongo_app_configs.MongoAdminConfig",
+    "apps.core.mongo_app_configs.MongoAuthConfig",
+    "apps.core.mongo_app_configs.MongoContentTypesConfig",
+    "apps.core.mongo_app_configs.MongoSessionsConfig",
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "rest_framework",
@@ -22,6 +22,7 @@ INSTALLED_APPS = [
     "apps.tecnicos",
     "apps.clientes",
     "apps.cuentas",
+    "apps.inventario",
     "apps.pedidos",
     "apps.dashboard",
     "apps.recomendaciones",
@@ -58,10 +59,17 @@ TEMPLATES = [
 WSGI_APPLICATION = "config.wsgi.application"
 ASGI_APPLICATION = "config.asgi.application"
 
+MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://127.0.0.1:27017").strip()
+MONGODB_DB_NAME = os.getenv("MONGODB_DB_NAME", "sistema_titulacion").strip()
+
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+        "ENGINE": "django_mongodb_backend",
+        "NAME": MONGODB_DB_NAME,
+        "HOST": MONGODB_URI,
+        "OPTIONS": {
+            "serverSelectionTimeoutMS": int(os.getenv("MONGODB_SERVER_SELECTION_TIMEOUT_MS", "3000")),
+        },
     }
 }
 
@@ -78,10 +86,21 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = "static/"
-DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+DEFAULT_AUTO_FIELD = "django_mongodb_backend.fields.ObjectIdAutoField"
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
 
 REST_FRAMEWORK = {
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    "DEFAULT_RENDERER_CLASSES": [
+        "apps.core.renderers.MongoJSONRenderer",
+    ],
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+    ],
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
+    ],
     "DEFAULT_FILTER_BACKENDS": [
         "django_filters.rest_framework.DjangoFilterBackend",
         "rest_framework.filters.SearchFilter",
@@ -98,6 +117,10 @@ SPECTACULAR_SETTINGS = {
 }
 
 CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3001",
     "http://localhost:4010",
     "http://127.0.0.1:4010",
 ]

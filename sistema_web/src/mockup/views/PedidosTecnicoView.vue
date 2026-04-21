@@ -28,6 +28,9 @@
             type="search"
             placeholder="Buscar por OT, cliente o servicio"
           />
+          <p v-if="bridge.backendError || actionError" class="camera-error">
+            {{ actionError || bridge.backendError }}
+          </p>
         </div>
 
         <div class="list-body">
@@ -466,7 +469,7 @@
 
 <script setup lang="ts">
 import * as L from 'leaflet';
-import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import type { ChecklistStepId, EvidenciaStage } from '../stores/tecnicoBridgeStore';
 import { useTecnicoBridgeStore } from '../stores/tecnicoBridgeStore';
 
@@ -479,15 +482,16 @@ interface PendingEvidence {
 }
 
 type TecnicoTab = 'resumen' | 'ejecucion' | 'evidencias' | 'informe' | 'reportes';
-type OperationalStatusKey = 'por-confirmar' | 'confirmado' | 'en-labor' | 'cierre-tecnico' | 'facturacion';
+type OperationalStatusKey = 'por-confirmar' | 'confirmado' | 'en-labor' | 'cierre-tecnico' | 'facturacion' | 'dado-de-baja';
 type WorkflowPhaseKey = 'confirmacion' | 'ejecucion' | 'evidencias' | 'cierre-tecnico' | 'facturacion';
 
 const bridge = useTecnicoBridgeStore();
-const tecnicoActual = ref(localStorage.getItem('prointel_mock_tecnico') || 'Luis Rojas');
+const tecnicoActual = ref('');
 const searchQuery = ref('');
 const selectedPedidoId = ref('');
 const activeTecnicoTab = ref<TecnicoTab>('resumen');
 const showCreatePedido = ref(false);
+const actionError = ref('');
 
 const createForm = reactive({
   client: '',
@@ -571,6 +575,7 @@ const workflowPhases: Array<{ key: WorkflowPhaseKey; label: string }> = [
 
 function toOperationalStatusKey(rawStatus?: string): OperationalStatusKey {
   const status = (rawStatus || '').toLowerCase();
+  if (status.includes('baja')) return 'dado-de-baja';
   if (status.includes('por confirmar')) return 'por-confirmar';
   if (status.includes('confirmado')) return 'confirmado';
   if (status.includes('en labor') || status.includes('proceso')) return 'en-labor';
@@ -582,6 +587,7 @@ function toOperationalStatusKey(rawStatus?: string): OperationalStatusKey {
 
 const tecnicoOptions = computed(() => {
   const names = new Set<string>([tecnicoActual.value]);
+  if (bridge.currentTecnicoNombre.value) names.add(bridge.currentTecnicoNombre.value);
   bridge.allPedidosForTecnico.value.forEach((pedido) => {
     if (pedido.tech) names.add(pedido.tech);
   });
@@ -590,9 +596,10 @@ const tecnicoOptions = computed(() => {
 
 const pedidosAsignados = computed(() => {
   const query = searchQuery.value.trim().toLowerCase();
+  const tecnicoFiltro = tecnicoActual.value.trim().toLowerCase();
 
   return bridge.allPedidosForTecnico.value
-    .filter((pedido) => (pedido.tech || '').toLowerCase() === tecnicoActual.value.toLowerCase())
+    .filter((pedido) => !tecnicoFiltro || (pedido.tech || '').toLowerCase() === tecnicoFiltro)
     .filter((pedido) => {
       if (!query) return true;
       return [pedido.code, pedido.client, pedido.service].join(' ').toLowerCase().includes(query);
@@ -639,6 +646,7 @@ const normalizedSelectedStatus = computed(() => {
     'en-labor': 'En labor',
     'cierre-tecnico': 'Cierre tecnico',
     facturacion: 'Facturacion',
+    'dado-de-baja': 'Dado de baja',
   };
   return labels[selectedStatusKey.value];
 });
@@ -748,7 +756,9 @@ const canSubmitServiceReport = computed(() => {
 });
 
 function saveTecnicoActual() {
-  localStorage.setItem('prointel_mock_tecnico', tecnicoActual.value);
+  if (!tecnicoActual.value.trim() && bridge.currentTecnicoNombre.value) {
+    tecnicoActual.value = bridge.currentTecnicoNombre.value;
+  }
 }
 
 function openPedido(pedidoId: string) {
@@ -762,17 +772,21 @@ function openTab(tab: TecnicoTab) {
   activeTecnicoTab.value = tab;
 }
 
-function confirmSelectedPedido() {
+async function confirmSelectedPedido() {
   if (!selectedPedido.value || selectedStatusKey.value !== 'por-confirmar') return;
 
-  bridge.addTecnicoUpdate({
-    pedidoId: selectedPedido.value.id,
-    tecnico: tecnicoActual.value,
-    status: 'Confirmado',
-    note: 'Pedido confirmado por tecnico. Se habilita fase de ejecucion.',
-  });
-
-  activeTecnicoTab.value = 'ejecucion';
+  actionError.value = '';
+  try {
+    await bridge.addTecnicoUpdate({
+      pedidoId: selectedPedido.value.id,
+      tecnico: tecnicoActual.value,
+      status: 'Confirmado',
+      note: 'Pedido confirmado por tecnico. Se habilita fase de ejecucion.',
+    });
+    activeTecnicoTab.value = 'ejecucion';
+  } catch (error) {
+    actionError.value = error instanceof Error ? error.message : 'No se pudo confirmar el pedido.';
+  }
 }
 
 function resetCreateForm() {
@@ -804,61 +818,34 @@ function isStepUnlocked(stepId: ChecklistStepId) {
   return bridge.canMarkChecklistStep(selectedPedido.value.id, stepId);
 }
 
-function completeSimpleStep(stepId: ChecklistStepId) {
+async function completeSimpleStep(stepId: ChecklistStepId) {
   if (!selectedPedido.value || !isStepUnlocked(stepId)) return;
 
-  bridge.markChecklistStep({
-    pedidoId: selectedPedido.value.id,
-    stepId,
-    done: true,
-  });
-
-  const labels: Record<ChecklistStepId, string> = {
-    'materiales-listos': 'Materiales verificados antes de salida.',
-    'llegada-sitio': 'Llegada al sitio confirmada.',
-    'inicio-trabajo': 'Inicio de trabajo registrado.',
-    'nota-adicional': 'Nota adicional registrada.',
-  };
-
-  bridge.addTecnicoUpdate({
-    pedidoId: selectedPedido.value.id,
-    tecnico: tecnicoActual.value,
-    note: labels[stepId],
-  });
-
-  if (selectedStatusKey.value === 'confirmado') {
-    bridge.addTecnicoUpdate({
+  actionError.value = '';
+  try {
+    await bridge.markChecklistStep({
       pedidoId: selectedPedido.value.id,
-      tecnico: tecnicoActual.value,
-      status: 'En labor',
-      note: 'Se inicio labor tecnico en campo.',
+      stepId,
+      done: true,
     });
+  } catch (error) {
+    actionError.value = error instanceof Error ? error.message : 'No se pudo actualizar el checklist.';
   }
 }
 
-function saveAdditionalNote() {
+async function saveAdditionalNote() {
   if (!selectedPedido.value || !additionalNote.value.trim() || !isStepUnlocked('nota-adicional')) return;
 
-  bridge.markChecklistStep({
-    pedidoId: selectedPedido.value.id,
-    stepId: 'nota-adicional',
-    done: true,
-    note: additionalNote.value.trim(),
-  });
-
-  bridge.addTecnicoUpdate({
-    pedidoId: selectedPedido.value.id,
-    tecnico: tecnicoActual.value,
-    note: `Nota adicional: ${additionalNote.value.trim()}`,
-  });
-
-  if (selectedStatusKey.value === 'confirmado') {
-    bridge.addTecnicoUpdate({
+  actionError.value = '';
+  try {
+    await bridge.markChecklistStep({
       pedidoId: selectedPedido.value.id,
-      tecnico: tecnicoActual.value,
-      status: 'En labor',
-      note: 'Se inicio labor tecnico en campo.',
+      stepId: 'nota-adicional',
+      done: true,
+      note: additionalNote.value.trim(),
     });
+  } catch (error) {
+    actionError.value = error instanceof Error ? error.message : 'No se pudo guardar la nota adicional.';
   }
 }
 
@@ -968,35 +955,34 @@ function captureFromCamera() {
   }
 }
 
-function sendEvidencias(stage: EvidenciaStage) {
+async function sendEvidencias(stage: EvidenciaStage) {
   if (!selectedPedido.value) return;
 
   const list = stage === 'antes' ? pendingAntes.value : pendingDespues.value;
   if (!list.length) return;
   if (list.some((item) => !item.description.trim())) return;
 
-  bridge.addEvidencias({
-    pedidoId: selectedPedido.value.id,
-    tecnico: tecnicoActual.value,
-    stage,
-    items: list.map((item) => ({
-      name: item.name,
-      url: item.url,
-      source: item.source,
-      description: item.description.trim(),
-    })),
-  });
+  actionError.value = '';
+  try {
+    await bridge.addEvidencias({
+      pedidoId: selectedPedido.value.id,
+      tecnico: tecnicoActual.value,
+      stage,
+      items: list.map((item) => ({
+        name: item.name,
+        url: item.url,
+        source: item.source,
+        description: item.description.trim(),
+      })),
+    });
 
-  bridge.addTecnicoUpdate({
-    pedidoId: selectedPedido.value.id,
-    tecnico: tecnicoActual.value,
-    note: `Se enviaron ${list.length} evidencias ${stage} con descripcion.`,
-  });
-
-  if (stage === 'antes') {
-    pendingAntes.value = [];
-  } else {
-    pendingDespues.value = [];
+    if (stage === 'antes') {
+      pendingAntes.value = [];
+    } else {
+      pendingDespues.value = [];
+    }
+  } catch (error) {
+    actionError.value = error instanceof Error ? error.message : 'No se pudo enviar evidencias.';
   }
 }
 
@@ -1078,24 +1064,29 @@ function clearSignature() {
   resizeSignatureCanvas();
 }
 
-function submitServiceReport() {
+async function submitServiceReport() {
   if (!selectedPedido.value || !canSubmitServiceReport.value || !signatureCanvasRef.value) return;
 
   const firma = signatureCanvasRef.value.toDataURL('image/png');
 
-  bridge.submitServiceReport({
-    pedidoId: selectedPedido.value.id,
-    tecnico: tecnicoActual.value,
-    cliente: reportForm.cliente,
-    responsableLocal: reportForm.responsableLocal.trim(),
-    pedidoSolicitado: reportForm.pedidoSolicitado.trim(),
-    observaciones: reportForm.observaciones.trim(),
-    recomendaciones: reportForm.recomendaciones.trim(),
-    firmaCliente: firma,
-  });
+  actionError.value = '';
+  try {
+    await bridge.submitServiceReport({
+      pedidoId: selectedPedido.value.id,
+      tecnico: tecnicoActual.value,
+      cliente: reportForm.cliente,
+      responsableLocal: reportForm.responsableLocal.trim(),
+      pedidoSolicitado: reportForm.pedidoSolicitado.trim(),
+      observaciones: reportForm.observaciones.trim(),
+      recomendaciones: reportForm.recomendaciones.trim(),
+      firmaCliente: firma,
+    });
 
-  activeTecnicoTab.value = 'reportes';
-  clearSignature();
+    activeTecnicoTab.value = 'reportes';
+    clearSignature();
+  } catch (error) {
+    actionError.value = error instanceof Error ? error.message : 'No se pudo enviar el informe tecnico.';
+  }
 }
 
 const mapContainerRef = ref<HTMLElement | null>(null);
@@ -1214,18 +1205,21 @@ watch(
     if (!evidenceComplete) return;
     if (statusKey !== 'en-labor') return;
 
-    bridge.addTecnicoUpdate({
-      pedidoId: selectedPedido.value.id,
-      tecnico: tecnicoActual.value,
-      status: 'Cierre tecnico',
-      note: 'Evidencias completas. Se habilita fase de cierre tecnico.',
-    });
-
     if (activeTecnicoTab.value !== 'informe') {
       activeTecnicoTab.value = 'informe';
     }
   }
 );
+
+onMounted(async () => {
+  actionError.value = '';
+  try {
+    await bridge.hydrateFromApi();
+    tecnicoActual.value = bridge.currentTecnicoNombre.value || tecnicoOptions.value[0] || '';
+  } catch (error) {
+    actionError.value = error instanceof Error ? error.message : 'No se pudo cargar pedidos asignados.';
+  }
+});
 
 onBeforeUnmount(() => {
   stopCamera();

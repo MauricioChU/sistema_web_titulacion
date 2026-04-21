@@ -1,8 +1,8 @@
-from rest_framework import serializers
+from apps.core.serializers import MongoModelSerializer
 from .models import Cliente
 
 
-class ClienteSerializer(serializers.ModelSerializer):
+class ClienteSerializer(MongoModelSerializer):
     class Meta:
         model = Cliente
         fields = "__all__"
