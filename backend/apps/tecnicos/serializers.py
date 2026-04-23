@@ -1,8 +1,22 @@
-from apps.core.serializers import MongoModelSerializer
+from rest_framework import serializers
+
 from .models import Tecnico
 
 
-class TecnicoSerializer(MongoModelSerializer):
+class TecnicoSerializer(serializers.ModelSerializer):
     class Meta:
         model = Tecnico
-        fields = "__all__"
+        fields = [
+            "id",
+            "user",
+            "nombre",
+            "especialidad",
+            "zona",
+            "latitud_base",
+            "longitud_base",
+            "capacidad_diaria",
+            "activo",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]

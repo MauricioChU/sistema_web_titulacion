@@ -2,6 +2,8 @@ from django.db import models
 
 
 class ItemInventario(models.Model):
+    """Articulo operativo en un almacen (puede ser consumible o equipo)."""
+
     sku = models.CharField(max_length=40, unique=True)
     descripcion = models.CharField(max_length=220)
     categoria = models.CharField(max_length=80)
@@ -10,6 +12,7 @@ class ItemInventario(models.Model):
     unidad_medida = models.CharField(max_length=20, default="unidad")
     almacen = models.CharField(max_length=80, default="principal")
     activo = models.BooleanField(default=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

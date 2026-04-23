@@ -1,4 +1,7 @@
 #!/usr/bin/env python
+"""Utilidad de linea de comandos de Django."""
+from __future__ import annotations
+
 import os
 import sys
 
@@ -9,8 +12,7 @@ def main() -> None:
         from django.core.management import execute_from_command_line
     except ImportError as exc:
         raise ImportError(
-            "Couldn't import Django. Are you sure it's installed and available on your "
-            "PYTHONPATH environment variable?"
+            "No se pudo importar Django. Activa el virtualenv e instala requirements.txt."
         ) from exc
     execute_from_command_line(sys.argv)
 

@@ -2,8 +2,6 @@ from django.apps import AppConfig
 
 
 class InventarioConfig(AppConfig):
-    default_auto_field = "django_mongodb_backend.fields.ObjectIdAutoField"
+    default_auto_field = "django.db.models.BigAutoField"
     name = "apps.inventario"
-
-    def ready(self):
-        from . import signals  # noqa: F401
+    verbose_name = "Inventario"

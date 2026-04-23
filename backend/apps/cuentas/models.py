@@ -1,8 +1,13 @@
-from django.db import models
 from django.core.validators import MaxValueValidator, MinValueValidator
+from django.db import models
 
 
 class Cuenta(models.Model):
+    """Sede o punto operativo de un cliente.
+
+    Cada cuenta tiene coordenadas que alimentan la recomendacion de tecnico.
+    """
+
     class TipoCuenta(models.TextChoices):
         EMPRESA = "empresa", "Empresa"
         HOGAR = "hogar", "Hogar"
@@ -20,6 +25,7 @@ class Cuenta(models.Model):
     latitud = models.FloatField(validators=[MinValueValidator(-90.0), MaxValueValidator(90.0)])
     longitud = models.FloatField(validators=[MinValueValidator(-180.0), MaxValueValidator(180.0)])
     activa = models.BooleanField(default=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

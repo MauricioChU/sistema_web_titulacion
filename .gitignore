@@ -1,6 +1,12 @@
 # Local Python virtual environments
 backend/.venv/
 
+# Frontend (sistema_web)
+sistema_web/node_modules/
+sistema_web/dist/
+sistema_web/.env
+sistema_web/.env.local
+
 # Python cache
 __pycache__/
 *.py[cod]

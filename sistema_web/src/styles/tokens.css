@@ -1,0 +1,104 @@
+/* -------------------------------------------------------------
+ * Design tokens - Paleta corporativa PROINTEL
+ * Base: verde corporativo + neutros claros.
+ * Usar siempre estas variables en vez de colores hardcoded.
+ * ------------------------------------------------------------- */
+
+:root {
+  /* --- Marca --- */
+  --color-primary-50: #ecfdf5;
+  --color-primary-100: #d1fae5;
+  --color-primary-200: #a7f3d0;
+  --color-primary-300: #6ee7b7;
+  --color-primary-400: #34d399;
+  --color-primary-500: #10b981; /* verde PROINTEL principal */
+  --color-primary-600: #059669;
+  --color-primary-700: #047857;
+  --color-primary-800: #065f46;
+  --color-primary-900: #064e3b;
+
+  /* --- Acentos --- */
+  --color-accent-400: #86efac; /* verde claro */
+  --color-accent-500: #4ade80;
+  --color-lime-500: #a3e635;
+
+  /* --- Superficies / fondo --- */
+  --color-bg: #f2fbf6; /* fondo general (blanco verdoso) */
+  --color-bg-soft: #e8f5ee;
+  --color-surface: #ffffff;
+  --color-surface-2: #f7fdf9;
+  --color-surface-alt: #eaf7f0;
+
+  /* --- Texto --- */
+  --color-text: #0f2a22; /* casi negro verdoso, buen contraste */
+  --color-text-soft: #2f5c4a;
+  --color-text-muted: #5f7b70;
+  --color-text-invert: #ffffff;
+
+  /* --- Bordes / divisores --- */
+  --color-border: #d8ebe0;
+  --color-border-strong: #bcdac8;
+  --color-border-focus: var(--color-primary-500);
+
+  /* --- Estados semanticos --- */
+  --color-success: #16a34a;
+  --color-warning: #f59e0b;
+  --color-danger: #dc2626;
+  --color-info: #0ea5e9;
+
+  /* --- Sombras --- */
+  --shadow-sm: 0 1px 2px rgba(16, 64, 48, 0.06);
+  --shadow-md: 0 6px 18px rgba(16, 64, 48, 0.08);
+  --shadow-lg: 0 18px 40px rgba(16, 64, 48, 0.12);
+
+  /* --- Radii --- */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-pill: 999px;
+
+  /* --- Espaciado base (para formularios, tablas, etc.) --- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+
+  /* --- Alias de uso frecuente (compatibilidad con CSS existente) --- */
+  --c-bg: var(--color-bg);
+  --c-surface: var(--color-surface);
+  --c-card: var(--color-surface);
+  --c-border: var(--color-border);
+  --c-text: var(--color-text);
+  --c-muted: var(--color-text-muted);
+  --c-primary: var(--color-primary-500);
+  --c-primary-strong: var(--color-primary-700);
+  --c-primary-soft: var(--color-primary-100);
+
+  /* --- Charts (Dashboard) --- */
+  --chart-1: #10b981;
+  --chart-2: #34d399;
+  --chart-3: #6ee7b7;
+  --chart-4: #a7f3d0;
+  --chart-5: #4ade80;
+  --chart-6: #0ea5e9;
+}
+
+/* Clases utilitarias para marca */
+.brand-gradient {
+  background: linear-gradient(
+    135deg,
+    var(--color-primary-600) 0%,
+    var(--color-primary-400) 100%
+  );
+  color: var(--color-text-invert);
+}
+
+.surface-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}

@@ -1,168 +1,139 @@
-# Backend Django Simplificado (OT)
+# Backend PROINTEL
 
-Backend REST construido con Django + DRF para reemplazar de forma simple partes del `ot-manager-api`.
+Django 5.2 + DRF + SimpleJWT. Sin MongoDB, sin overhead: SQLite en dev, Postgres en prod.
 
-## Alcance implementado
+## Stack
 
-- CRUD de tecnicos
-- CRUD de clientes
-- CRUD de cuentas
-- CRUD de pedidos
-- Dashboard de resumen
-- Recomendacion de tecnico mas adecuado para un pedido
-- Autoasignacion de tecnico sugerido
-- Fases simplificadas del pedido:
-  - `creacion`
-  - `programacion`
-  - `seguimiento`
-  - `cierre`
+| Capa | Libreria |
+|------|---------|
+| Framework | Django 5.2 |
+| API | djangorestframework 3.15 |
+| Auth | djangorestframework-simplejwt 5.3 |
+| CORS | django-cors-headers 4.4 |
+| Filtros | django-filter 24.3 |
+| Docs API | drf-spectacular 0.27 |
+| Imagenes | Pillow 10.4 |
 
-## Estructura
-
-- `config/`: configuracion Django
-- `apps/core`: health check
-- `apps/tecnicos`: modelo y CRUD de tecnicos
-- `apps/clientes`: modelo y CRUD de clientes
-- `apps/cuentas`: modelo y CRUD de cuentas
-- `apps/pedidos`: pedidos + acciones de recomendacion y autoasignacion
-- `apps/recomendaciones`: logica de scoring
-- `apps/dashboard`: endpoint de resumen
-
-## Instalacion y ejecucion
+## Inicio rapido
 
 ```bash
-cd backend
+# 1. Entorno virtual
 python -m venv .venv
-# Windows
-.venv\Scripts\activate
-# Linux/Mac
-source .venv/bin/activate
+source .venv/bin/activate      # Linux/Mac
+.venv\Scripts\activate         # Windows
 
+# 2. Dependencias
 pip install -r requirements.txt
-copy .env.example .env
-python manage.py makemigrations
+
+# 3. Variables de entorno
+cp .env.example .env
+# editar .env si es necesario
+
+# 4. Base de datos + datos demo
 python manage.py migrate
-python manage.py runserver 0.0.0.0:8000
+python manage.py seed_demo
+
+# 5. Servidor
+python manage.py runserver
 ```
 
-## Endpoints principales
+Servidor en: http://127.0.0.1:8000
 
-- `GET /api/health/`
-- `GET /api/docs/`
-- `GET /api/schema/`
+## Credenciales demo
 
-### CRUDs
+| Usuario | Password | Rol |
+|---------|----------|-----|
+| admin | admin1234 | superadmin |
+| coordinador1 | coord1234 | coordinador |
+| tecnico1 | tec1234 | tecnico |
+| tecnico2 | tec1234 | tecnico |
 
-- `/api/tecnicos/`
-- `/api/clientes/`
-- `/api/cuentas/`
-- `/api/pedidos/`
+## Estructura de apps
 
-### Dashboard
-
-- `GET /api/dashboard/resumen/`
-
-### Recomendacion
-
-- `GET /api/recomendaciones/pedidos/{pedido_id}/tecnico-sugerido/`
-- `POST /api/pedidos/{id}/recomendar_tecnico/`
-- `POST /api/pedidos/{id}/auto_asignar/`
-
-## Base de datos MongoDB (principal)
-
-Este backend esta configurado para usar MongoDB como base de datos principal de Django.
-
-Por defecto, el backend conecta a Mongo local con:
-
-- `MONGODB_URI=mongodb://127.0.0.1:27017`
-- `MONGODB_DB_NAME=sistema_titulacion`
-- `MONGODB_PEDIDOS_COLLECTION=pedidos`
-- `MONGODB_CLIENTES_COLLECTION=clientes`
-- `MONGODB_CUENTAS_COLLECTION=cuentas`
-- `MONGODB_TECNICOS_COLLECTION=tecnicos`
-
-Si quieres valores personalizados, configura estas variables de entorno:
-
-- `DJANGO_DB_ENGINE` (opcional, default: `django_mongodb_backend`)
-- `MONGODB_URI` (ejemplo: `mongodb://localhost:27017`)
-- `MONGODB_DB_NAME` (ejemplo: `sistema_titulacion`)
-- `MONGODB_PEDIDOS_COLLECTION` (opcional, default: `pedidos`)
-- `MONGODB_CLIENTES_COLLECTION` (opcional, default: `clientes`)
-- `MONGODB_CUENTAS_COLLECTION` (opcional, default: `cuentas`)
-- `MONGODB_TECNICOS_COLLECTION` (opcional, default: `tecnicos`)
-- `MONGODB_SERVER_SELECTION_TIMEOUT_MS` (opcional, default: `3000`)
-
-Si deseas desactivar la sincronizacion de colecciones espejo, define:
-
-- `MONGODB_SYNC_ENABLED=false`
-
-Con esas variables activas, el backend mantiene colecciones operativas y espejo en Mongo para:
-
-- Crear/editar/eliminar pedido
-- Crear/editar/eliminar cliente
-- Crear/editar/eliminar cuenta
-- Crear/editar/eliminar tecnico
-
-## Prueba rapida (script Python)
-
-Para validar rapidamente que `POST /api/pedidos/` crea el pedido y que queda sincronizado en Mongo, ejecuta:
-
-```bash
-cd backend
-# Windows (venv local)
-.venv\Scripts\python.exe scripts\verify_create_pedido.py
-
-# Alternativa si no usas ese venv
-python scripts\verify_create_pedido.py
+```
+apps/
+  accounts/       — auth: login, refresh, /me + roles + permisos
+  clientes/       — CRUD clientes corporativos
+  cuentas/        — CRUD sedes/puntos operativos con coordenadas
+  tecnicos/       — CRUD tecnicos de campo con ubicacion base
+  inventario/     — CRUD items de inventario
+  pedidos/        — workflow completo de pedidos (models + services + views)
+  recomendaciones/— scoring haversine para sugerir tecnico
+  dashboard/      — KPIs operativos agregados
+  core/           — health check
 ```
 
-Salida esperada:
+## Patron arquitectonico: views delgadas + services
 
-- `"ok": true`
-- `"pedido_id": <numero>`
-- `"mongo_found": true`
+Las vistas solo se encargan de autenticacion/permisos, deserializacion y formateo de respuesta.
+Toda la logica de negocio (transiciones de estado, validaciones cruzadas) vive en `services.py`.
 
-Tambien puedes correrlo desde VS Code con la tarea:
-
-- `Backend: Verify pedido create + Mongo`
-
-## Prueba rapida (sync operacional con senales)
-
-Para validar de extremo a extremo la sincronizacion Mongo de `clientes`, `cuentas` y `tecnicos` (create/update/delete), ejecuta:
-
-```bash
-cd backend
-# Windows (venv local)
-.venv\Scripts\python.exe scripts\verify_operational_mongo_sync.py
-
-# Alternativa si no usas ese venv
-python scripts\verify_operational_mongo_sync.py
+```
+PedidoViewSet.confirmar()
+    └─► services.confirmar_pedido(pedido, tecnico=t, usuario=u)
+            └─► pedido.fase = PROGRAMACION
+            └─► pedido.status_operativo = CONFIRMADO
+            └─► save_with_history(...)
+            └─► TecnicoUpdate.objects.create(...)
 ```
 
-Salida esperada:
+## Contrato de API con el frontend
 
-- `"ok": true`
-- `"updated_checks"` con valores actualizados
-- `"delete_checks": "ok"`
+Base URL: `http://127.0.0.1:8000/api/`
 
-## Logica de recomendacion
+### Auth
+| Metodo | Path | Descripcion |
+|--------|------|-------------|
+| POST | auth/login/ | Obtener tokens JWT |
+| POST | auth/refresh/ | Refrescar access token |
+| GET | auth/me/ | Perfil del usuario autenticado |
 
-Scoring simple por tecnico activo:
+### Recursos CRUD
+| Recurso | Path base |
+|---------|-----------|
+| Clientes | clientes/ |
+| Cuentas | cuentas/ |
+| Tecnicos | tecnicos/ |
+| Inventario | inventario/ |
+| Pedidos | pedidos/ |
 
-- +40 si coincide `zona` con el pedido
-- +35 si coincide `especialidad` con `tipo_servicio`
-- +5 por cada cupo disponible hasta maximo +25
+### Acciones de workflow (pedidos)
+| Metodo | Path | Actor | Descripcion |
+|--------|------|-------|-------------|
+| POST | pedidos/{id}/confirmar/ | Tecnico | Acepta el pedido |
+| POST | pedidos/{id}/checklist/ | Tecnico | Actualiza paso del checklist |
+| POST | pedidos/{id}/evidencia/ | Tecnico | Sube foto antes/despues |
+| PATCH | pedidos/{id}/diagnostico/ | Tecnico | Actualiza diagnostico tecnico |
+| POST | pedidos/{id}/informe/ | Tecnico | Cierra con informe final + firma |
+| POST | pedidos/{id}/dar_de_baja/ | Coordinador | Baja operativa |
 
-`cupo_disponible = capacidad_diaria - pedidos_abiertos`
+### Recomendaciones y dashboard
+| Metodo | Path | Descripcion |
+|--------|------|-------------|
+| GET | recomendaciones/tecnicos/?lat=X&lon=Y | Top 5 tecnicos por score |
+| GET | dashboard/kpis/ | Contadores operativos |
+| GET | dashboard/pedidos-por-estado/ | Agrupado por status |
+| GET | dashboard/pedidos-por-tecnico/ | Carga por tecnico |
 
-Se consideran pedidos abiertos las fases: `creacion`, `programacion`, `seguimiento`.
+## Docs interactivas
 
-## Nucleo recomendado (siguiente iteracion)
+Con el servidor corriendo: http://127.0.0.1:8000/api/docs/
 
-Para profesionalizar este backend, recomiendo agregar:
+## Roles y permisos
 
-- Autenticacion JWT y roles (`admin`, `coordinador`, `tecnico`)
-- Auditoria de cambios (historial por pedido)
-- Reglas de transicion de fases (maquina de estados)
-- Colas de tareas para notificaciones (Celery + Redis)
-- Tests unitarios y de integracion con pytest
+| Grupo Django | Rol en API | Puede hacer |
+|-------------|------------|-------------|
+| (superuser) | admin | Todo |
+| coordinadores | coordinador | CRUD completo + dar_de_baja |
+| tecnicos | tecnico | Ver pedidos propios + acciones tecnico |
+| (ninguno) | usuario | Solo lectura |
+
+Los grupos se crean automaticamente con `seed_demo`.
+
+## Variables de entorno
+
+Ver `.env.example`. En produccion obligatorias:
+- `DJANGO_SECRET_KEY` — clave secreta fuerte
+- `DJANGO_DEBUG=false`
+- `DATABASE_URL` — postgres://user:pass@host/db
+- `CORS_ALLOWED_ORIGINS` — origen del frontend

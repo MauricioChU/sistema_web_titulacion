@@ -1,8 +1,20 @@
-from apps.core.serializers import MongoModelSerializer
+from rest_framework import serializers
+
 from .models import Cliente
 
 
-class ClienteSerializer(MongoModelSerializer):
+class ClienteSerializer(serializers.ModelSerializer):
     class Meta:
         model = Cliente
-        fields = "__all__"
+        fields = [
+            "id",
+            "nombre",
+            "documento",
+            "telefono",
+            "correo",
+            "direccion",
+            "activo",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]

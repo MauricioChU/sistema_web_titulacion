@@ -1,10 +1,7 @@
 from django.urls import path
-from .views import RecomendacionPedidoView
+
+from .views import RecomendarTecnicoView
 
 urlpatterns = [
-    path(
-        "recomendaciones/pedidos/<int:pedido_id>/tecnico-sugerido/",
-        RecomendacionPedidoView.as_view(),
-        name="recomendacion-tecnico-pedido",
-    ),
+    path("recomendaciones/tecnicos/", RecomendarTecnicoView.as_view(), name="recomendaciones-tecnicos"),
 ]

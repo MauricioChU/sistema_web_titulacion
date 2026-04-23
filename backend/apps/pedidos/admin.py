@@ -1,47 +1,38 @@
 from django.contrib import admin
+
 from .models import ChecklistStep, Evidencia, InformeTecnico, Pedido, TecnicoUpdate
+
+
+class ChecklistStepInline(admin.TabularInline):
+    model = ChecklistStep
+    extra = 0
+    readonly_fields = ("completado_en", "created_at")
+
+
+class EvidenciaInline(admin.TabularInline):
+    model = Evidencia
+    extra = 0
+    readonly_fields = ("created_at",)
+
+
+class TecnicoUpdateInline(admin.TabularInline):
+    model = TecnicoUpdate
+    extra = 0
+    readonly_fields = ("created_at",)
+    can_delete = False
 
 
 @admin.register(Pedido)
 class PedidoAdmin(admin.ModelAdmin):
-    list_display = (
-        "id",
-        "titulo",
-        "cliente",
-        "tecnico_asignado",
-        "fase",
-        "subfase_tecnica",
-        "status_operativo",
-        "prioridad",
-        "zona",
-        "created_at",
-    )
-    list_filter = ("fase", "subfase_tecnica", "status_operativo", "prioridad", "zona")
-    search_fields = ("titulo", "cliente__nombre", "tecnico_asignado__nombre")
-
-
-@admin.register(TecnicoUpdate)
-class TecnicoUpdateAdmin(admin.ModelAdmin):
-    list_display = ("id", "pedido", "tecnico", "nuevo_estado", "created_at")
-    list_filter = ("nuevo_estado", "created_at")
-    search_fields = ("pedido__titulo", "tecnico__nombre", "nota")
-
-
-@admin.register(ChecklistStep)
-class ChecklistStepAdmin(admin.ModelAdmin):
-    list_display = ("id", "pedido", "step_id", "completado", "tecnico", "completado_en")
-    list_filter = ("step_id", "completado")
-    search_fields = ("pedido__titulo", "tecnico__nombre", "nota")
-
-
-@admin.register(Evidencia)
-class EvidenciaAdmin(admin.ModelAdmin):
-    list_display = ("id", "pedido", "tecnico", "stage", "source", "created_at")
-    list_filter = ("stage", "source", "created_at")
-    search_fields = ("pedido__titulo", "tecnico__nombre", "nombre", "descripcion")
+    list_display = ("codigo", "titulo", "cliente", "tecnico_asignado", "fase", "status_operativo", "prioridad", "created_at")
+    list_filter = ("fase", "status_operativo", "prioridad")
+    search_fields = ("codigo", "titulo", "descripcion")
+    readonly_fields = ("codigo", "created_at", "updated_at", "historial")
+    inlines = [ChecklistStepInline, EvidenciaInline, TecnicoUpdateInline]
+    ordering = ("-created_at",)
 
 
 @admin.register(InformeTecnico)
 class InformeTecnicoAdmin(admin.ModelAdmin):
-    list_display = ("id", "pedido", "tecnico", "created_at", "updated_at")
-    search_fields = ("pedido__titulo", "tecnico__nombre", "diagnostico_final", "observaciones")
+    list_display = ("pedido", "tecnico", "created_at")
+    readonly_fields = ("created_at", "updated_at")

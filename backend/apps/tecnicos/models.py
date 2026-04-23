@@ -4,6 +4,8 @@ from django.db import models
 
 
 class Tecnico(models.Model):
+    """Perfil tecnico de campo, ligado opcionalmente a un usuario auth."""
+
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -18,6 +20,7 @@ class Tecnico(models.Model):
     longitud_base = models.FloatField(validators=[MinValueValidator(-180.0), MaxValueValidator(180.0)])
     capacidad_diaria = models.PositiveIntegerField(default=5)
     activo = models.BooleanField(default=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

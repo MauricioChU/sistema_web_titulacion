@@ -1,5 +1,18 @@
-from django.db import models
-from django.db import IntegrityError, transaction
+"""Modelos del dominio Pedido.
+
+Un `Pedido` tiene un workflow en 4 fases (`creacion`, `programacion`,
+`seguimiento`, `cierre`) y un detalle operativo expresado por `status_operativo`
++ `subfase_tecnica`. Ver `services.py` para las transiciones.
+
+Relaciones auxiliares:
+    - `TecnicoUpdate`: bitacora de eventos del tecnico (nota + estado).
+    - `ChecklistStep`: pasos checklist fijos durante la ejecucion.
+    - `Evidencia`: fotos antes/despues.
+    - `InformeTecnico`: entregable final (uno por pedido).
+"""
+from __future__ import annotations
+
+from django.db import IntegrityError, models, transaction
 from django.utils import timezone
 
 
@@ -35,8 +48,18 @@ class Pedido(models.Model):
         CIERRE_TECNICO = "cierre-tecnico", "Cierre tecnico"
         FACTURACION = "facturacion", "Facturacion"
 
-    cliente = models.ForeignKey("clientes.Cliente", on_delete=models.PROTECT, related_name="pedidos")
-    cuenta = models.ForeignKey("cuentas.Cuenta", on_delete=models.PROTECT, related_name="pedidos", null=True, blank=True)
+    cliente = models.ForeignKey(
+        "clientes.Cliente",
+        on_delete=models.PROTECT,
+        related_name="pedidos",
+    )
+    cuenta = models.ForeignKey(
+        "cuentas.Cuenta",
+        on_delete=models.PROTECT,
+        related_name="pedidos",
+        null=True,
+        blank=True,
+    )
     tecnico_asignado = models.ForeignKey(
         "tecnicos.Tecnico",
         on_delete=models.SET_NULL,
@@ -75,43 +98,48 @@ class Pedido(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["fase"]),
+            models.Index(fields=["status_operativo"]),
+            models.Index(fields=["tecnico_asignado"]),
+        ]
 
     def __str__(self) -> str:
         return f"{self.codigo or 'SIN-CODIGO'} - {self.titulo}"
 
+    # ------------------------------------------------------------------ #
+    # Codigo operativo autogenerado (A0001, A0002, ...)                  #
+    # ------------------------------------------------------------------ #
     @classmethod
     def _next_codigo(cls) -> str:
         max_counter = 0
         for value in cls.objects.exclude(codigo="").values_list("codigo", flat=True):
-            if not isinstance(value, str):
+            if not isinstance(value, str) or not value.startswith(cls.CODE_PREFIX):
                 continue
-            if not value.startswith(cls.CODE_PREFIX):
-                continue
-
             number_part = value[len(cls.CODE_PREFIX):]
-            if not number_part.isdigit():
-                continue
-            max_counter = max(max_counter, int(number_part))
-
-        next_counter = max_counter + 1
-        return f"{cls.CODE_PREFIX}{next_counter:0{cls.CODE_PADDING}d}"
+            if number_part.isdigit():
+                max_counter = max(max_counter, int(number_part))
+        return f"{cls.CODE_PREFIX}{max_counter + 1:0{cls.CODE_PADDING}d}"
 
     def save(self, *args, **kwargs):
         if self.codigo:
             return super().save(*args, **kwargs)
 
+        # Reintentar unas pocas veces ante condicion de carrera con codigo.
         for _ in range(5):
             self.codigo = self._next_codigo()
             try:
                 with transaction.atomic():
                     return super().save(*args, **kwargs)
             except IntegrityError:
-                # Retry when concurrent create generated the same code.
                 self.codigo = ""
 
         raise RuntimeError("No se pudo generar un codigo unico para el pedido.")
 
-    def agregar_historial(self, evento: str, usuario=None, detalle: str | None = None):
+    # ------------------------------------------------------------------ #
+    # Historial del pedido (lista JSON de eventos)                       #
+    # ------------------------------------------------------------------ #
+    def agregar_historial(self, evento: str, usuario=None, detalle: str = "") -> None:
         historial = list(self.historial or [])
         historial.append(
             {

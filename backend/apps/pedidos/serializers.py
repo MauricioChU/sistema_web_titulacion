@@ -1,10 +1,10 @@
 from rest_framework import serializers
-from apps.core.serializers import MongoModelSerializer
+
 from .models import ChecklistStep, Evidencia, InformeTecnico, Pedido, TecnicoUpdate
 
 
-class TecnicoUpdateSerializer(MongoModelSerializer):
-    tecnico_nombre = serializers.CharField(source="tecnico.nombre", read_only=True)
+class TecnicoUpdateSerializer(serializers.ModelSerializer):
+    tecnico_nombre = serializers.CharField(source="tecnico.nombre", read_only=True, default="")
 
     class Meta:
         model = TecnicoUpdate
@@ -20,8 +20,8 @@ class TecnicoUpdateSerializer(MongoModelSerializer):
         read_only_fields = ["id", "created_at", "tecnico_nombre"]
 
 
-class ChecklistStepSerializer(MongoModelSerializer):
-    tecnico_nombre = serializers.CharField(source="tecnico.nombre", read_only=True)
+class ChecklistStepSerializer(serializers.ModelSerializer):
+    tecnico_nombre = serializers.CharField(source="tecnico.nombre", read_only=True, default="")
 
     class Meta:
         model = ChecklistStep
@@ -42,16 +42,9 @@ class ChecklistStepSerializer(MongoModelSerializer):
             "tecnico": {"required": False},
         }
 
-    def validate(self, attrs):
-        step_id = attrs.get("step_id")
-        nota = (attrs.get("nota") or "").strip()
-        if step_id == ChecklistStep.StepId.NOTA_ADICIONAL and not nota:
-            raise serializers.ValidationError({"nota": "La nota adicional es obligatoria para este paso."})
-        return attrs
 
-
-class EvidenciaSerializer(MongoModelSerializer):
-    tecnico_nombre = serializers.CharField(source="tecnico.nombre", read_only=True)
+class EvidenciaSerializer(serializers.ModelSerializer):
+    tecnico_nombre = serializers.CharField(source="tecnico.nombre", read_only=True, default="")
 
     class Meta:
         model = Evidencia
@@ -70,8 +63,8 @@ class EvidenciaSerializer(MongoModelSerializer):
         read_only_fields = ["id", "created_at", "tecnico_nombre"]
 
 
-class InformeTecnicoSerializer(MongoModelSerializer):
-    tecnico_nombre = serializers.CharField(source="tecnico.nombre", read_only=True)
+class InformeTecnicoSerializer(serializers.ModelSerializer):
+    tecnico_nombre = serializers.CharField(source="tecnico.nombre", read_only=True, default="")
 
     class Meta:
         model = InformeTecnico
@@ -92,15 +85,18 @@ class InformeTecnicoSerializer(MongoModelSerializer):
         read_only_fields = ["id", "created_at", "updated_at", "tecnico_nombre"]
 
 
-class PedidoSerializer(MongoModelSerializer):
-    cliente_nombre = serializers.CharField(source="cliente.nombre", read_only=True)
-    cuenta_numero = serializers.CharField(source="cuenta.numero", read_only=True)
-    cuenta_nombre = serializers.CharField(source="cuenta.nombre", read_only=True)
-    cuenta_direccion = serializers.CharField(source="cuenta.direccion", read_only=True)
-    cuenta_distrito = serializers.CharField(source="cuenta.distrito", read_only=True)
-    cuenta_latitud = serializers.FloatField(source="cuenta.latitud", read_only=True)
-    cuenta_longitud = serializers.FloatField(source="cuenta.longitud", read_only=True)
-    tecnico_nombre = serializers.CharField(source="tecnico_asignado.nombre", read_only=True)
+class PedidoSerializer(serializers.ModelSerializer):
+    """Forma que consume el frontend (campos planos cuenta_/cliente_/tecnico_)."""
+
+    cliente_nombre = serializers.CharField(source="cliente.nombre", read_only=True, default="")
+    cuenta_numero = serializers.CharField(source="cuenta.numero", read_only=True, default="")
+    cuenta_nombre = serializers.CharField(source="cuenta.nombre", read_only=True, default="")
+    cuenta_direccion = serializers.CharField(source="cuenta.direccion", read_only=True, default="")
+    cuenta_distrito = serializers.CharField(source="cuenta.distrito", read_only=True, default="")
+    cuenta_latitud = serializers.FloatField(source="cuenta.latitud", read_only=True, default=None)
+    cuenta_longitud = serializers.FloatField(source="cuenta.longitud", read_only=True, default=None)
+    tecnico_nombre = serializers.CharField(source="tecnico_asignado.nombre", read_only=True, default="")
+
     tecnico_updates = TecnicoUpdateSerializer(many=True, read_only=True)
     checklist_steps = ChecklistStepSerializer(many=True, read_only=True)
     evidencias = EvidenciaSerializer(many=True, read_only=True)
@@ -130,6 +126,7 @@ class PedidoSerializer(MongoModelSerializer):
             "fecha_cierre",
             "created_at",
             "updated_at",
+            # Campos planos para el front
             "cliente_nombre",
             "cuenta_numero",
             "cuenta_nombre",
@@ -138,6 +135,7 @@ class PedidoSerializer(MongoModelSerializer):
             "cuenta_latitud",
             "cuenta_longitud",
             "tecnico_nombre",
+            # Relaciones anidadas
             "tecnico_updates",
             "checklist_steps",
             "evidencias",
@@ -145,18 +143,21 @@ class PedidoSerializer(MongoModelSerializer):
         ]
         read_only_fields = [
             "codigo",
+            "historial",
             "created_at",
             "updated_at",
             "tecnico_updates",
             "checklist_steps",
             "evidencias",
             "informe_tecnico",
+            "cliente_nombre",
             "cuenta_numero",
             "cuenta_nombre",
             "cuenta_direccion",
             "cuenta_distrito",
             "cuenta_latitud",
             "cuenta_longitud",
+            "tecnico_nombre",
         ]
 
     def validate(self, attrs):
@@ -164,8 +165,7 @@ class PedidoSerializer(MongoModelSerializer):
         cuenta = attrs.get("cuenta") if "cuenta" in attrs else getattr(self.instance, "cuenta", None)
 
         if cuenta and cliente and cuenta.cliente_id != cliente.id:
-            raise serializers.ValidationError({
-                "cuenta": "La cuenta seleccionada no pertenece al cliente del pedido."
-            })
-
+            raise serializers.ValidationError(
+                {"cuenta": "La cuenta seleccionada no pertenece al cliente del pedido."}
+            )
         return attrs
