@@ -1,85 +1,38 @@
-import {
-  apiRequest,
-  type PaginatedResponse,
-  unwrapList,
-  withQuery,
-} from './http';
+import { apiRequest, withQuery } from './http';
 
 export interface ApiCuenta {
   id: string;
-  cliente: string;
+  cliente_id: string;
+  cliente_nombre: string;
   nombre: string;
   numero: string;
   direccion: string;
   distrito: string;
   contacto: string;
   telefono: string;
-  tipo: 'empresa' | 'hogar' | 'gobierno' | 'otro';
+  tipo: string;
   latitud: number;
   longitud: number;
   activa: boolean;
+  created_at: string;
 }
 
-export async function listCuentas(
-  options: { cliente?: string; search?: string } = {},
-) {
-  const path = withQuery('/cuentas/', {
-    cliente: options.cliente,
-    search: options.search,
-  });
-  const payload = await apiRequest<ApiCuenta[] | PaginatedResponse<ApiCuenta>>(
-    path,
-  );
-  return unwrapList(payload);
+export function listCuentas(params: { cliente_id?: string; search?: string } = {}): Promise<ApiCuenta[]> {
+  return apiRequest<ApiCuenta[]>(withQuery('/cuentas/', params as Record<string, string>));
 }
 
-export function createCuenta(payload: {
-  cliente: string;
-  nombre: string;
-  numero: string;
-  latitud: number;
-  longitud: number;
-  direccion?: string;
-  distrito?: string;
-  contacto?: string;
-  telefono?: string;
-  tipo?: 'empresa' | 'hogar' | 'gobierno' | 'otro';
-  activa?: boolean;
-}) {
-  return apiRequest<ApiCuenta>('/cuentas/', {
-    method: 'POST',
-    body: {
-      tipo: 'empresa',
-      activa: true,
-      ...payload,
-    },
-  });
+export function getCuenta(id: string): Promise<ApiCuenta> {
+  return apiRequest<ApiCuenta>(`/cuentas/${id}/`);
 }
 
-export function updateCuenta(
-  cuentaId: string,
-  payload: Partial<{
-    cliente: string;
-    nombre: string;
-    numero: string;
-    direccion: string;
-    distrito: string;
-    contacto: string;
-    telefono: string;
-    latitud: number;
-    longitud: number;
-    tipo: 'empresa' | 'hogar' | 'gobierno' | 'otro';
-    activa: boolean;
-  }>,
-) {
-  return apiRequest<ApiCuenta>(`/cuentas/${cuentaId}/`, {
-    method: 'PATCH',
-    body: payload,
-  });
+export function createCuenta(data: Partial<ApiCuenta>): Promise<ApiCuenta> {
+  return apiRequest<ApiCuenta>('/cuentas/', { method: 'POST', body: data });
 }
 
-export function deleteCuenta(cuentaId: string) {
-  return apiRequest<void>(`/cuentas/${cuentaId}/`, {
-    method: 'DELETE',
-  });
+export function updateCuenta(id: string, data: Partial<ApiCuenta>): Promise<ApiCuenta> {
+  return apiRequest<ApiCuenta>(`/cuentas/${id}/`, { method: 'PUT', body: data });
+}
+
+export function deleteCuenta(id: string): Promise<void> {
+  return apiRequest<void>(`/cuentas/${id}/`, { method: 'DELETE' });
 }

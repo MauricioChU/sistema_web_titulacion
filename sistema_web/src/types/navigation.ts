@@ -2,7 +2,9 @@ export type ViewKey =
   | 'dashboard'
   | 'pedidos'
   | 'pedidos-tecnico'
-  | 'base-datos';
+  | 'base-datos'
+  | 'notificaciones'
+  | 'usuarios';
 
 export interface MenuItem {
   key: ViewKey;

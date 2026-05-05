@@ -1,61 +1,56 @@
-export type UserRole = 'admin' | 'coordinador' | 'tecnico' | 'usuario';
+export type UserRole = 'admin' | 'coordinador' | 'tecnico';
+export type Privilegio = 'supervisor' | null;
 
 export interface SessionUser {
-  id: number;
+  id: string;
   username: string;
+  nombre_completo: string;
   email: string;
-  role: UserRole;
-  tecnicoId: number | null;
-  tecnicoNombre: string | null;
+  rol: UserRole;
+  privilegio: Privilegio;
+  avatar?: string | null;
 }
 
-const ACCESS_TOKEN_KEY = 'prointel_access_token';
-const REFRESH_TOKEN_KEY = 'prointel_refresh_token';
-const USER_KEY = 'prointel_auth_user';
+const TOKEN_KEY = 'prointel_token';
+const USER_KEY  = 'prointel_auth_user';
 
-function getStorage(): Storage | null {
-  if (typeof window === 'undefined') return null;
-  return window.localStorage;
+function store(): Storage | null {
+  return typeof window === 'undefined' ? null : window.localStorage;
 }
 
-export function getAccessToken() {
-  return getStorage()?.getItem(ACCESS_TOKEN_KEY) || '';
+export function getToken(): string {
+  return store()?.getItem(TOKEN_KEY) || '';
 }
 
-export function getRefreshToken() {
-  return getStorage()?.getItem(REFRESH_TOKEN_KEY) || '';
+export function setToken(token: string): void {
+  store()?.setItem(TOKEN_KEY, token);
 }
 
-export function setTokens(access: string, refresh: string) {
-  const storage = getStorage();
-  if (!storage) return;
-  storage.setItem(ACCESS_TOKEN_KEY, access);
-  storage.setItem(REFRESH_TOKEN_KEY, refresh);
-}
-
-export function setSessionUser(user: SessionUser) {
-  const storage = getStorage();
-  if (!storage) return;
-  storage.setItem(USER_KEY, JSON.stringify(user));
+export function setSessionUser(user: SessionUser): void {
+  store()?.setItem(USER_KEY, JSON.stringify(user));
 }
 
 export function getSessionUser(): SessionUser | null {
-  const storage = getStorage();
-  if (!storage) return null;
-  const raw = storage.getItem(USER_KEY);
+  const raw = store()?.getItem(USER_KEY);
   if (!raw) return null;
-
-  try {
-    return JSON.parse(raw) as SessionUser;
-  } catch {
-    return null;
-  }
+  try { return JSON.parse(raw) as SessionUser; } catch { return null; }
 }
 
-export function clearSession() {
-  const storage = getStorage();
-  if (!storage) return;
-  storage.removeItem(ACCESS_TOKEN_KEY);
-  storage.removeItem(REFRESH_TOKEN_KEY);
-  storage.removeItem(USER_KEY);
+export function clearSession(): void {
+  store()?.removeItem(TOKEN_KEY);
+  store()?.removeItem(USER_KEY);
+}
+
+// ── Role helpers ──────────────────────────────────────────────────────────────
+export function esAdmin(u: SessionUser | null): boolean {
+  return u?.rol === 'admin';
+}
+export function esCoordinador(u: SessionUser | null): boolean {
+  return u?.rol === 'coordinador' || u?.rol === 'admin';
+}
+export function esTecnico(u: SessionUser | null): boolean {
+  return u?.rol === 'tecnico';
+}
+export function esSupervisor(u: SessionUser | null): boolean {
+  return u?.rol === 'admin' || (u?.rol === 'coordinador' && u?.privilegio === 'supervisor');
 }

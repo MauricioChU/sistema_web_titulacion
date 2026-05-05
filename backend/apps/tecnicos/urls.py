@@ -1,8 +1,8 @@
-from rest_framework.routers import DefaultRouter
+from django.urls import path
+from .views import TecnicoListView, TecnicoDetailView, TecnicoRecomendarView
 
-from .views import TecnicoViewSet
-
-router = DefaultRouter()
-router.register("tecnicos", TecnicoViewSet, basename="tecnico")
-
-urlpatterns = router.urls
+urlpatterns = [
+    path("", TecnicoListView.as_view(), name="tecnico-list"),
+    path("recomendar/", TecnicoRecomendarView.as_view(), name="tecnico-recomendar"),
+    path("<str:pk>/", TecnicoDetailView.as_view(), name="tecnico-detail"),
+]

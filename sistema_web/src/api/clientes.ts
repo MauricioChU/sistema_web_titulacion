@@ -1,64 +1,33 @@
-import {
-  apiRequest,
-  type PaginatedResponse,
-  unwrapList,
-  withQuery,
-} from './http';
+import { apiRequest, withQuery } from './http';
 
 export interface ApiCliente {
   id: string;
   nombre: string;
-  documento: string;
+  ruc: string;
   telefono: string;
   correo: string;
   direccion: string;
   activo: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
-export async function listClientes(options: { search?: string } = {}) {
-  const path = withQuery('/clientes/', { search: options.search });
-  const payload = await apiRequest<
-    ApiCliente[] | PaginatedResponse<ApiCliente>
-  >(path);
-  return unwrapList(payload);
+export function listClientes(params: { search?: string } = {}): Promise<ApiCliente[]> {
+  return apiRequest<ApiCliente[]>(withQuery('/clientes/', params as Record<string, string>));
 }
 
-export function createCliente(payload: {
-  nombre: string;
-  documento: string;
-  telefono: string;
-  correo: string;
-  direccion: string;
-  activo?: boolean;
-}) {
-  return apiRequest<ApiCliente>('/clientes/', {
-    method: 'POST',
-    body: {
-      activo: true,
-      ...payload,
-    },
-  });
+export function getCliente(id: string): Promise<ApiCliente> {
+  return apiRequest<ApiCliente>(`/clientes/${id}/`);
 }
 
-export function updateCliente(
-  clienteId: string,
-  payload: Partial<{
-    nombre: string;
-    documento: string;
-    telefono: string;
-    correo: string;
-    direccion: string;
-    activo: boolean;
-  }>,
-) {
-  return apiRequest<ApiCliente>(`/clientes/${clienteId}/`, {
-    method: 'PATCH',
-    body: payload,
-  });
+export function createCliente(data: Partial<ApiCliente>): Promise<ApiCliente> {
+  return apiRequest<ApiCliente>('/clientes/', { method: 'POST', body: data });
 }
 
-export function deleteCliente(clienteId: string) {
-  return apiRequest<void>(`/clientes/${clienteId}/`, {
-    method: 'DELETE',
-  });
+export function updateCliente(id: string, data: Partial<ApiCliente>): Promise<ApiCliente> {
+  return apiRequest<ApiCliente>(`/clientes/${id}/`, { method: 'PUT', body: data });
+}
+
+export function deleteCliente(id: string): Promise<void> {
+  return apiRequest<void>(`/clientes/${id}/`, { method: 'DELETE' });
 }

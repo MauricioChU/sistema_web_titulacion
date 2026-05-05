@@ -1,8 +1,7 @@
-from rest_framework.routers import DefaultRouter
+from django.urls import path
+from .views import CuentaListView, CuentaDetailView
 
-from .views import CuentaViewSet
-
-router = DefaultRouter()
-router.register("cuentas", CuentaViewSet, basename="cuenta")
-
-urlpatterns = router.urls
+urlpatterns = [
+    path("", CuentaListView.as_view(), name="cuenta-list"),
+    path("<str:pk>/", CuentaDetailView.as_view(), name="cuenta-detail"),
+]

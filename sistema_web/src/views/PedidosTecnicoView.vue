@@ -1,2156 +1,762 @@
 <template>
-  <section class="tecnico-view">
-    <header class="head card">
+  <div class="tecnico-view">
+    <header class="tv-header">
       <div>
-        <h2>Mis Pedidos Tecnico</h2>
-        <p>Ejecucion por fases con evidencia obligatoria e informe tecnico final.</p>
+        <h2>Mis Pedidos</h2>
+        <p>Gestiona el trabajo de campo asignado a tu usuario</p>
       </div>
-      <div class="head-actions">
-        <button class="btn ghost" @click="showCreatePedido = !showCreatePedido">
-          {{ showCreatePedido ? 'Cerrar creador' : 'Crear pedido rapido' }}
-        </button>
+      <div class="header-stats">
+        <div class="stat-pill"><span>{{ pedidosPorConfirmar.length }}</span> por confirmar</div>
+        <div class="stat-pill active"><span>{{ pedidosEnCurso.length }}</span> en curso</div>
       </div>
     </header>
 
-    <div class="layout">
-      <aside class="list card">
-        <div class="list-head">
-          <h3>Pedidos asignados</h3>
-          <label>
-            Tecnico
-            <select v-model="tecnicoActual" @change="saveTecnicoActual">
-              <option v-for="name in tecnicoOptions" :key="name" :value="name">{{ name }}</option>
-            </select>
-          </label>
-          <input
-            v-model="searchQuery"
-            class="list-search"
-            type="search"
-            placeholder="Buscar por OT, cliente o servicio"
-          />
-          <p v-if="bridge.backendError || actionError" class="camera-error">
-            {{ actionError || bridge.backendError }}
-          </p>
+    <div class="tv-layout">
+      <!-- Lista de pedidos -->
+      <aside class="tv-sidebar">
+        <div class="tv-filters">
+          <input v-model="search" type="search" placeholder="Buscar OT o cliente..." class="tv-search" />
+          <select v-model="filterEstado" class="tv-select">
+            <option value="">Todos los estados</option>
+            <option value="por-confirmar">Por confirmar</option>
+            <option value="confirmado">Confirmado</option>
+            <option value="en-labor">En labor</option>
+            <option value="cierre-tecnico">Cierre técnico</option>
+            <option value="completado">Completado</option>
+            <option value="dado-de-baja">Dado de baja</option>
+          </select>
         </div>
 
-        <div class="list-body">
-          <div v-if="pedidosAsignados.length === 0" class="empty">
-            No hay pedidos asignados para {{ tecnicoActual }}.
-          </div>
-
+        <div class="tv-list">
+          <div v-if="loading" class="tv-empty">Cargando...</div>
+          <div v-else-if="filteredPedidos.length === 0" class="tv-empty">No hay pedidos asignados.</div>
           <button
-            v-for="pedido in pedidosAsignados"
-            :key="pedido.id"
-            class="pedido-item"
-            :class="{ active: selectedPedidoId === pedido.id }"
-            @click="openPedido(pedido.id)"
+            v-for="p in filteredPedidos"
+            :key="p.id"
+            class="tv-item"
+            :class="{
+              active: selectedId === p.id,
+              urgent: p.prioridad === 'critica' || p.prioridad === 'alta',
+              pending: p.estado === 'por-confirmar'
+            }"
+            @click="selectPedido(p.id)"
           >
-            <div class="item-top">
-              <strong>{{ pedido.code }}</strong>
-              <span>{{ pedido.status }}</span>
+            <div class="tv-item-top">
+              <strong>{{ p.codigo }}</strong>
+              <span class="tv-badge" :class="`pr-${p.prioridad}`">{{ p.prioridad }}</span>
             </div>
-            <p>{{ pedido.client }}</p>
-            <small>{{ pedido.service }}</small>
+            <div class="tv-item-cliente">{{ p.cliente_nombre }}</div>
+            <p class="tv-item-titulo">{{ p.titulo }}</p>
+            <div class="tv-item-bottom">
+              <span class="tv-estado" :class="`es-${p.estado}`">{{ estadoLabel(p.estado) }}</span>
+              <span class="tv-fecha">{{ fmtDate(p.created_at) }}</span>
+            </div>
+            <div v-if="p.estado === 'por-confirmar'" class="pending-indicator">⚡ Requiere confirmación</div>
           </button>
         </div>
       </aside>
 
-      <article class="detail card" v-if="selectedPedido">
-        <section class="panel workflow-panel">
-          <div class="workflow-head">
+      <!-- Panel principal -->
+      <main class="tv-main">
+        <div v-if="!selected" class="tv-empty-detail">
+          <div class="empty-icon">🔧</div>
+          <p>Selecciona un pedido para ver las acciones disponibles.</p>
+        </div>
+
+        <div v-else class="tv-card">
+          <!-- Encabezado -->
+          <div class="tv-card-head">
             <div>
-              <h3>Flujo operativo del pedido</h3>
-              <p class="muted">La fase avanza automaticamente al completar tareas clave.</p>
+              <h3>{{ selected.codigo }} — {{ selected.titulo }}</h3>
+              <p>{{ selected.cliente_nombre }} · {{ selected.cuenta_nombre }}</p>
+              <p class="tv-desc">{{ selected.descripcion }}</p>
             </div>
-            <div class="workflow-head-actions">
-              <span class="state-chip">Estado: {{ normalizedSelectedStatus }}</span>
-              <button v-if="selectedStatusKey === 'por-confirmar'" class="btn primary" @click="confirmSelectedPedido">
-                Confirmar pedido
+            <div class="head-badges">
+              <span class="tv-badge" :class="`pr-${selected.prioridad}`">{{ selected.prioridad }}</span>
+              <span class="tv-estado" :class="`es-${selected.estado}`">{{ estadoLabel(selected.estado) }}</span>
+            </div>
+          </div>
+
+          <!-- Acción rápida: confirmar / rechazar -->
+          <div v-if="selected.estado === 'por-confirmar'" class="action-card urgent-action">
+            <h4>⚡ Acción requerida</h4>
+            <p>Este pedido necesita tu confirmación antes de iniciar el trabajo de campo.</p>
+            <div class="action-btns">
+              <button class="btn-confirm" :disabled="actionLoading" @click="confirmar">
+                {{ actionLoading ? 'Procesando...' : '✓ Confirmar pedido' }}
               </button>
+              <button class="btn-reject" @click="showRechazar = true">✕ Rechazar pedido</button>
             </div>
           </div>
 
-          <div class="workflow-rail" :style="{ '--workflow-progress': `${workflowProgress}%` }">
-            <div
-              v-for="(phase, index) in workflowPhases"
-              :key="phase.key"
-              class="workflow-node"
-              :class="{
-                done: index < currentWorkflowIndex,
-                active: index === currentWorkflowIndex,
-                upcoming: index > currentWorkflowIndex,
-              }"
-            >
-              <span class="workflow-circle">{{ index + 1 }}</span>
-              <strong class="workflow-label">{{ phase.label }}</strong>
-            </div>
-          </div>
-        </section>
-
-        <section class="panel metrics-panel">
-          <h3>Panel del tecnico</h3>
-          <div class="metrics-grid">
-            <article>
-              <span>Asignados</span>
-              <strong>{{ pedidosAsignados.length }}</strong>
-            </article>
-            <article>
-              <span>Completados</span>
-              <strong>{{ pedidosCompletados }}</strong>
-            </article>
-            <article>
-              <span>Reportes IVT</span>
-              <strong>{{ reportesTecnico.length }}</strong>
-            </article>
-            <article>
-              <span>Sin reporte final</span>
-              <strong>{{ pedidosSinReporte }}</strong>
-            </article>
-          </div>
-        </section>
-
-        <nav class="tecnico-tabs panel" aria-label="Fases tecnico">
-          <button class="tab" :class="{ active: activeTecnicoTab === 'resumen' }" @click="openTab('resumen')">
-            Resumen
-          </button>
-          <button
-            class="tab"
-            :class="{ active: activeTecnicoTab === 'ejecucion', locked: !isExecutionTabUnlocked }"
-            :disabled="!isExecutionTabUnlocked"
-            @click="openTab('ejecucion')"
-          >
-            Ejecucion
-          </button>
-          <button
-            class="tab"
-            :class="{ active: activeTecnicoTab === 'evidencias', locked: !isEvidenceTabUnlocked }"
-            :disabled="!isEvidenceTabUnlocked"
-            @click="openTab('evidencias')"
-          >
-            Evidencias
-          </button>
-          <button
-            class="tab"
-            :class="{ active: activeTecnicoTab === 'informe', locked: !isInformeTabUnlocked }"
-            :disabled="!isInformeTabUnlocked"
-            @click="openTab('informe')"
-          >
-            Informe tecnico
-          </button>
-          <button class="tab" :class="{ active: activeTecnicoTab === 'reportes' }" @click="openTab('reportes')">
-            IVT anteriores
-          </button>
-        </nav>
-
-        <section v-if="activeTecnicoTab === 'resumen'" class="summary-flow">
-          <section class="panel">
-            <div class="summary-head">
-              <div class="summary-title">
-                <h3>{{ selectedPedido.code }} - {{ selectedPedido.client }}</h3>
-                <p class="muted">{{ selectedPedido.service }}</p>
-              </div>
-              <div class="summary-meta">
-                <span class="chip">Fecha {{ selectedPedido.date }}</span>
-                <span class="priority" :data-priority="selectedPedido.priority">{{ selectedPedido.priority }}</span>
+          <!-- EPPs asignados -->
+          <div v-if="selected.epps_asignados?.length" class="tv-section">
+            <h4>EPPs asignados para este pedido</h4>
+            <div class="items-table">
+              <div class="item-row header-row"><span>EPP</span><span>SKU</span><span>Cant.</span><span>Precio unit.</span></div>
+              <div v-for="e in selected.epps_asignados" :key="e.item_id" class="item-row">
+                <span>{{ e.nombre }}</span>
+                <span>{{ e.sku }}</span>
+                <span>{{ e.cantidad }}</span>
+                <span>S/ {{ e.precio_unitario.toFixed(2) }}</span>
               </div>
             </div>
-
-            <div class="summary-grid">
-              <div><span>Cuenta</span><strong>{{ selectedPedido.accountCode || '-' }}</strong></div>
-              <div><span>Contacto</span><strong>{{ selectedPedido.contactName || '-' }}</strong></div>
-              <div><span>Telefono</span><strong>{{ selectedPedido.contactPhone || '-' }}</strong></div>
-              <div><span>Direccion</span><strong>{{ selectedPedido.referenceAddress || '-' }}</strong></div>
-              <div><span>Distrito</span><strong>{{ selectedPedido.district || '-' }}</strong></div>
-              <div><span>Coordenadas</span><strong>{{ selectedPedido.coordinates || '-' }}</strong></div>
-            </div>
-          </section>
-
-          <section class="panel playbook-panel">
-            <div class="playbook-head">
-              <h3>Guia tecnica operativa</h3>
-              <span class="state-chip">Fase actual: {{ currentWorkflowLabel }}</span>
-            </div>
-            <p class="muted">{{ selectedServiceGuide.summary }}</p>
-            <div class="guide-grid">
-              <article v-for="(item, idx) in selectedServiceGuide.tasks" :key="`${selectedPedido.id}-${idx}`" class="guide-card">
-                <span class="guide-step">Paso {{ idx + 1 }}</span>
-                <p>{{ item }}</p>
-              </article>
-            </div>
-          </section>
-
-          <section class="panel map-panel">
-            <div class="map-head">
-              <h3>Ubicacion del pedido</h3>
-              <small>{{ selectedPedido.coordinates || 'Sin coordenadas' }}</small>
-            </div>
-            <div ref="mapContainerRef" class="map-canvas"></div>
-            <p v-if="!parsedCoordinates" class="muted">
-              No se encontraron coordenadas validas. Se muestra un centro referencial.
-            </p>
-          </section>
-
-          <section v-if="showCreatePedido" class="panel create-box">
-            <h3>Crear pedido rapido</h3>
-            <div class="create-grid">
-              <label>
-                Cliente
-                <input v-model.trim="createForm.client" type="text" placeholder="Cliente" />
-              </label>
-              <label>
-                Codigo cuenta
-                <input v-model.trim="createForm.accountCode" type="text" placeholder="CUE-XXXX" />
-              </label>
-              <label class="wide">
-                Servicio
-                <input v-model.trim="createForm.service" type="text" placeholder="Servicio a realizar" />
-              </label>
-              <label class="wide">
-                Diagnostico inicial
-                <textarea v-model.trim="createForm.diagnosis" rows="3" placeholder="Describe el problema"></textarea>
-              </label>
-            </div>
-            <div class="actions">
-              <button class="btn ghost" @click="resetCreateForm">Limpiar</button>
-              <button class="btn primary" :disabled="!canCreatePedido" @click="createPedidoFromTecnico">
-                Crear y enviar a coordinador
-              </button>
-            </div>
-          </section>
-        </section>
-
-        <section v-else-if="activeTecnicoTab === 'ejecucion'" class="panel">
-          <div class="execution-head">
-            <div>
-              <h3>Checklist de ejecucion</h3>
-              <p class="muted">Completa los pasos operativos antes de habilitar evidencias.</p>
-            </div>
-            <strong>{{ checklistDoneCount }}/{{ checklistForSelected.length }} completados</strong>
           </div>
 
-          <div class="execution-track">
-            <span :style="{ width: `${executionProgress}%` }"></span>
-          </div>
-
-          <ol class="checklist">
-            <li
-              v-for="(step, index) in checklistForSelected"
-              :key="step.id"
-              :class="{
-                done: step.done,
-                locked: !isStepUnlocked(step.id),
-                current: isStepUnlocked(step.id) && !step.done,
-              }"
+          <!-- Tabs (disponibles cuando confirmado o más avanzado) -->
+          <nav class="tv-tabs" v-if="['confirmado','en-labor','cierre-tecnico','completado'].includes(selected.estado)">
+            <button
+              v-for="t in tabs"
+              :key="t.key"
+              class="tab-btn"
+              :class="{ active: tab === t.key }"
+              @click="tab = t.key"
             >
-              <div class="step-index">{{ index + 1 }}</div>
-              <div class="step-content">
-                <div class="step-head">
+              {{ t.label }}
+            </button>
+          </nav>
+
+          <!-- Tab: Checklist -->
+          <div v-if="tab === 'checklist' && selected.estado !== 'por-confirmar'" class="tab-content">
+            <div class="checklist-grid">
+              <div
+                v-for="step in selected.checklist"
+                :key="step.step_id"
+                class="check-card"
+                :class="{ done: step.completado }"
+              >
+                <div class="check-header">
+                  <span class="check-icon">{{ step.completado ? '✓' : '○' }}</span>
                   <strong>{{ step.label }}</strong>
-                  <span v-if="step.done" class="done-pill">{{ step.doneAt }}</span>
-                  <span v-else-if="!isStepUnlocked(step.id)" class="locked-pill">Bloqueado</span>
-                  <span v-else class="open-pill">Pendiente</span>
+                  <small v-if="step.completado_en">{{ fmtDate(step.completado_en!) }}</small>
                 </div>
-
-                <div v-if="step.id === 'nota-adicional'" class="step-note">
-                  <label>
-                    Informacion adicional
-                    <textarea
-                      v-model.trim="additionalNote"
-                      rows="3"
-                      :disabled="!isStepUnlocked(step.id) || step.done"
-                      placeholder="Describe hallazgos, pruebas y datos relevantes"
-                    ></textarea>
-                  </label>
-                  <div class="actions">
-                    <button
-                      class="btn primary save-note-btn"
-                      :disabled="!isStepUnlocked(step.id) || step.done || !additionalNote.trim()"
-                      @click="saveAdditionalNote"
-                    >
-                      Guardar nota
-                    </button>
-                  </div>
-                </div>
-
-                <div v-else class="step-actions">
+                <div v-if="step.nota" class="check-nota">{{ step.nota }}</div>
+                <div v-if="!step.completado" class="check-actions">
+                  <input
+                    v-model="checkNota[step.step_id]"
+                    type="text"
+                    placeholder="Nota opcional..."
+                    class="check-input"
+                  />
                   <button
-                    class="btn mini"
-                    :disabled="!isStepUnlocked(step.id) || step.done"
-                    @click="completeSimpleStep(step.id)"
+                    class="btn-complete"
+                    :disabled="actionLoading"
+                    @click="marcarChecklist(step.step_id)"
                   >
-                    Marcar paso completado
+                    Marcar completado
                   </button>
                 </div>
               </div>
-            </li>
-          </ol>
-        </section>
-
-        <section v-else-if="activeTecnicoTab === 'evidencias'" class="detail-flow">
-          <section class="panel phase-status-panel">
-            <h3>Evidencias obligatorias</h3>
-            <div class="phase-status-grid">
-              <article :class="{ complete: hasBeforeEvidence }">
-                <span>Antes del servicio</span>
-                <strong>{{ hasBeforeEvidence ? 'Completado' : 'Pendiente' }}</strong>
-              </article>
-              <article :class="{ complete: hasAfterEvidence }">
-                <span>Despues del servicio</span>
-                <strong>{{ hasAfterEvidence ? 'Completado' : 'Pendiente' }}</strong>
-              </article>
             </div>
-            <p class="muted">Debes completar ambos bloques para habilitar Informe tecnico.</p>
-          </section>
+          </div>
 
-          <section class="panel evidence-step">
-            <h3>Bloque antes del servicio</h3>
-            <div class="evidence-actions">
-              <label class="file-btn">
-                <input type="file" accept="image/*" multiple @change="onFileInput($event, 'antes')" />
-                Subir archivos
-              </label>
-              <button class="btn ghost" @click="startCamera('antes')">Abrir camara</button>
-            </div>
-            <div v-if="pendingAntes.length" class="evidence-grid">
-              <article v-for="item in pendingAntes" :key="item.id" class="evidence-item">
-                <img :src="item.url" :alt="item.name" />
-                <small>{{ item.name }}</small>
-                <label>
-                  Descripcion de evidencia
-                  <input v-model.trim="item.description" type="text" placeholder="Describe brevemente esta imagen" />
+          <!-- Tab: Evidencias -->
+          <div v-else-if="tab === 'evidencias'" class="tab-content">
+            <div class="ev-upload">
+              <h4>Subir evidencia</h4>
+              <div class="upload-form">
+                <select v-model="evForm.stage" class="ev-select">
+                  <option value="antes">Antes del trabajo</option>
+                  <option value="despues">Después del trabajo</option>
+                </select>
+                <input v-model="evForm.descripcion" type="text" placeholder="Descripción..." class="ev-input" />
+                <label class="file-label">
+                  <span>{{ evForm.file ? evForm.file.name : 'Seleccionar imagen' }}</span>
+                  <input type="file" accept="image/*" @change="onFileChange" hidden />
                 </label>
-              </article>
+                <button class="btn-upload" :disabled="!evForm.file || uploadingEv" @click="uploadEv">
+                  {{ uploadingEv ? 'Subiendo...' : '↑ Subir' }}
+                </button>
+              </div>
+              <p v-if="evError" class="form-error">{{ evError }}</p>
             </div>
-            <div class="actions">
-              <button class="btn ghost" :disabled="pendingAntes.length === 0" @click="pendingAntes = []">Limpiar</button>
-              <button class="btn primary" :disabled="!canSendAntes" @click="sendEvidencias('antes')">
-                Enviar bloque antes
-              </button>
-            </div>
-          </section>
 
-          <section class="panel evidence-step">
-            <h3>Bloque despues del servicio</h3>
-            <div class="evidence-actions">
-              <label class="file-btn">
-                <input type="file" accept="image/*" multiple @change="onFileInput($event, 'despues')" />
-                Subir archivos
-              </label>
-              <button class="btn ghost" @click="startCamera('despues')">Abrir camara</button>
-            </div>
-            <div v-if="pendingDespues.length" class="evidence-grid">
-              <article v-for="item in pendingDespues" :key="item.id" class="evidence-item">
-                <img :src="item.url" :alt="item.name" />
-                <small>{{ item.name }}</small>
-                <label>
-                  Descripcion de evidencia
-                  <input v-model.trim="item.description" type="text" placeholder="Describe brevemente esta imagen" />
-                </label>
-              </article>
-            </div>
-            <div class="actions">
-              <button class="btn ghost" :disabled="pendingDespues.length === 0" @click="pendingDespues = []">Limpiar</button>
-              <button class="btn primary" :disabled="!canSendDespues" @click="sendEvidencias('despues')">
-                Enviar bloque despues
-              </button>
-            </div>
-          </section>
-
-          <section class="panel" v-if="cameraActive">
-            <h3>Camara activa ({{ cameraStage === 'antes' ? 'ANTES' : 'DESPUES' }})</h3>
-            <p class="muted">Captura y agrega la imagen al bloque correspondiente.</p>
-            <p v-if="cameraError" class="camera-error">{{ cameraError }}</p>
-            <div class="camera-wrap">
-              <video ref="videoRef" autoplay playsinline muted></video>
-              <div class="actions">
-                <button class="btn primary" @click="captureFromCamera">Capturar foto</button>
-                <button class="btn ghost" @click="stopCamera">Cerrar camara</button>
+            <div class="ev-gallery" v-if="selected.evidencias?.length">
+              <div v-for="e in selected.evidencias" :key="e.id" class="ev-card">
+                <img :src="evidenciaUrl(e.archivo)" :alt="e.nombre" />
+                <div class="ev-info">
+                  <span class="ev-stage" :class="`stage-${e.stage}`">{{ e.stage }}</span>
+                  <small>{{ e.descripcion }}</small>
+                  <small>{{ fmtDate(e.uploaded_at) }}</small>
+                </div>
               </div>
             </div>
-          </section>
+            <p v-else class="tv-empty">Sin evidencias cargadas aún.</p>
+          </div>
 
-          <section class="panel">
-            <h3>Evidencias enviadas</h3>
-            <div v-if="evidenciasForSelected.length" class="evidence-sent-grid">
-              <article v-for="item in evidenciasForSelected" :key="item.id" class="evidence-item sent">
-                <img :src="item.url" :alt="item.name" />
-                <small>{{ item.stage.toUpperCase() }} - {{ item.createdAt }}</small>
-                <small v-if="item.description">{{ item.description }}</small>
-              </article>
+          <!-- Tab: Diagnóstico -->
+          <div v-else-if="tab === 'diagnostico'" class="tab-content">
+            <h4>Diagnóstico técnico</h4>
+            <textarea
+              v-model="diagText"
+              rows="5"
+              class="tv-textarea"
+              placeholder="Describe los hallazgos técnicos encontrados en el campo..."
+            ></textarea>
+            <div class="form-actions">
+              <button class="btn-primary" :disabled="savingDiag" @click="saveDiag">
+                {{ savingDiag ? 'Guardando...' : 'Guardar diagnóstico' }}
+              </button>
             </div>
-            <p v-else class="muted">Aun no se enviaron evidencias.</p>
-          </section>
-        </section>
-
-        <section v-else-if="activeTecnicoTab === 'informe'" class="panel">
-          <h3>Formato de servicio tecnico</h3>
-          <p class="muted">Completa el formato final y registra la firma del cliente.</p>
-
-          <div class="service-grid">
-            <label>
-              Cliente
-              <input v-model="reportForm.cliente" type="text" readonly />
-            </label>
-            <label>
-              Responsable del local
-              <input v-model.trim="reportForm.responsableLocal" type="text" placeholder="Nombre del responsable" />
-            </label>
-            <label class="wide">
-              Pedido solicitado
-              <input v-model.trim="reportForm.pedidoSolicitado" type="text" placeholder="Servicio solicitado" />
-            </label>
-            <label class="wide">
-              Observaciones
-              <textarea v-model.trim="reportForm.observaciones" rows="3" placeholder="Observaciones del cliente y del tecnico"></textarea>
-            </label>
-            <label class="wide">
-              Recomendaciones
-              <textarea v-model.trim="reportForm.recomendaciones" rows="3" placeholder="Recomendaciones para el cliente"></textarea>
-            </label>
+            <p v-if="diagError" class="form-error">{{ diagError }}</p>
           </div>
 
-          <div class="signature-box">
-            <div class="signature-head">
-              <strong>Firma del cliente (obligatoria)</strong>
-              <button class="btn ghost" @click="clearSignature">Limpiar firma</button>
+          <!-- Tab: Materiales usados -->
+          <div v-else-if="tab === 'materiales'" class="tab-content">
+            <h4>Registrar materiales usados</h4>
+            <p class="tv-hint">Los materiales se descuentan automáticamente del inventario al registrarlos.</p>
+
+            <div class="item-adder">
+              <select v-model="matSel.item_id" @change="onMatChange" style="flex:2" class="ev-select">
+                <option value="">Seleccionar material del inventario...</option>
+                <option v-for="i in inventario" :key="i.id" :value="i.id">
+                  {{ i.nombre }} — stock: {{ i.stock_disponible }} {{ i.unidad }}
+                </option>
+              </select>
+              <input v-model.number="matSel.cantidad" type="number" min="1" placeholder="Cant." class="qty-input" />
+              <button class="btn-add" @click="addMat">+ Agregar</button>
             </div>
-            <canvas
-              ref="signatureCanvasRef"
-              class="signature-canvas"
-              @pointerdown="startSignature"
-              @pointermove="moveSignature"
-              @pointerup="endSignature"
-              @pointerleave="endSignature"
-            ></canvas>
-            <small v-if="!hasSignature" class="muted">Dibuja la firma para continuar.</small>
+
+            <div class="items-table" v-if="matUsados.length">
+              <div class="item-row header-row">
+                <span>Material</span><span>SKU</span><span>Cant.</span><span>P.Unit.</span><span>Subtotal</span><span></span>
+              </div>
+              <div v-for="(m, idx) in matUsados" :key="idx" class="item-row">
+                <span>{{ m.nombre }}</span>
+                <span>{{ m.sku }}</span>
+                <span>{{ m.cantidad }}</span>
+                <span>S/ {{ m.precio_unitario.toFixed(2) }}</span>
+                <span>S/ {{ (m.cantidad * m.precio_unitario).toFixed(2) }}</span>
+                <button class="btn-remove" @click="matUsados.splice(idx, 1)">✕</button>
+              </div>
+            </div>
+
+            <p v-if="matError" class="form-error">{{ matError }}</p>
+            <div class="form-actions">
+              <button class="btn-primary" :disabled="!matUsados.length || savingMat" @click="saveMateriales">
+                {{ savingMat ? 'Registrando...' : 'Registrar materiales' }}
+              </button>
+            </div>
+
+            <div v-if="selected.materiales_usados?.length" class="mt-4">
+              <h5>Materiales ya registrados</h5>
+              <div class="items-table">
+                <div class="item-row header-row">
+                  <span>Material</span><span>SKU</span><span>Cant.</span><span>P.Unit.</span><span>Subtotal</span><span></span>
+                </div>
+                <div v-for="m in selected.materiales_usados" :key="m.item_id" class="item-row">
+                  <span>{{ m.nombre }}</span>
+                  <span>{{ m.sku }}</span>
+                  <span>{{ m.cantidad }}</span>
+                  <span>S/ {{ m.precio_unitario.toFixed(2) }}</span>
+                  <span>S/ {{ (m.cantidad * m.precio_unitario).toFixed(2) }}</span>
+                  <span></span>
+                </div>
+              </div>
+            </div>
           </div>
 
-          <div class="actions">
-            <button class="btn primary" :disabled="!canSubmitServiceReport" @click="submitServiceReport">
-              Enviar formato al coordinador
-            </button>
+          <!-- Tab: Informe final -->
+          <div v-else-if="tab === 'informe'" class="tab-content">
+            <div v-if="selected.informe" class="informe-done">
+              <h4>✓ Informe enviado</h4>
+              <div class="info-grid">
+                <ul class="info-list">
+                  <li><span>Diagnóstico final</span><strong>{{ selected.informe.diagnostico_final }}</strong></li>
+                  <li><span>Responsable local</span><strong>{{ selected.informe.responsable_local }}</strong></li>
+                  <li><span>Pedido solicitado</span><strong>{{ selected.informe.pedido_solicitado }}</strong></li>
+                </ul>
+                <ul class="info-list">
+                  <li><span>Observaciones</span><strong>{{ selected.informe.observaciones }}</strong></li>
+                  <li><span>Recomendaciones</span><strong>{{ selected.informe.recomendaciones }}</strong></li>
+                </ul>
+              </div>
+            </div>
+
+            <form v-else @submit.prevent="submitInforme" class="informe-form">
+              <h4>Enviar informe de cierre técnico</h4>
+              <label>
+                Diagnóstico final *
+                <textarea v-model="informeForm.diagnostico_final" rows="3" required placeholder="Hallazgos y diagnóstico final..."></textarea>
+              </label>
+              <div class="form-row">
+                <label>
+                  Responsable local *
+                  <input v-model="informeForm.responsable_local" required placeholder="Nombre del responsable en sitio" />
+                </label>
+                <label>
+                  Pedido solicitado
+                  <input v-model="informeForm.pedido_solicitado" placeholder="Descripción del pedido solicitado" />
+                </label>
+              </div>
+              <label>
+                Observaciones *
+                <textarea v-model="informeForm.observaciones" rows="2" required placeholder="Observaciones adicionales..."></textarea>
+              </label>
+              <label>
+                Recomendaciones *
+                <textarea v-model="informeForm.recomendaciones" rows="2" required placeholder="Recomendaciones para el cliente..."></textarea>
+              </label>
+              <label>
+                Firma del cliente (imagen)
+                <label class="file-label" style="cursor:pointer">
+                  <span>{{ informeForm.firma ? informeForm.firma.name : 'Seleccionar imagen de firma...' }}</span>
+                  <input type="file" accept="image/*" @change="onFirmaChange" hidden />
+                </label>
+              </label>
+              <p v-if="informeError" class="form-error">{{ informeError }}</p>
+              <div class="form-actions">
+                <button type="submit" class="btn-primary" :disabled="savingInforme">
+                  {{ savingInforme ? 'Enviando...' : 'Enviar informe' }}
+                </button>
+              </div>
+            </form>
           </div>
-        </section>
-
-        <section v-else class="panel">
-          <h3>IVT / Reportes anteriores</h3>
-          <p class="muted">Historial de formatos de servicio tecnico enviados por {{ tecnicoActual }}.</p>
-
-          <div v-if="reportesTecnico.length === 0" class="empty">Aun no hay reportes enviados.</div>
-
-          <div v-else class="reports-list">
-            <article v-for="report in reportesTecnico" :key="report.id" class="report-item">
-              <header>
-                <strong>{{ report.pedidoId }}</strong>
-                <span>{{ report.createdAt }}</span>
-              </header>
-              <p><strong>Cliente:</strong> {{ report.cliente }}</p>
-              <p><strong>Responsable local:</strong> {{ report.responsableLocal }}</p>
-              <p><strong>Pedido solicitado:</strong> {{ report.pedidoSolicitado }}</p>
-              <p><strong>Observaciones:</strong> {{ report.observaciones }}</p>
-              <p><strong>Recomendaciones:</strong> {{ report.recomendaciones }}</p>
-              <details>
-                <summary>Ver firma del cliente</summary>
-                <img :src="report.firmaCliente" alt="Firma cliente" class="signature-preview" />
-              </details>
-            </article>
-          </div>
-        </section>
-      </article>
-
-      <article v-else class="detail card empty-detail">
-        <p>Selecciona un pedido asignado para empezar.</p>
-      </article>
+        </div>
+      </main>
     </div>
 
-    <canvas ref="captureCanvasRef" class="hidden-canvas"></canvas>
-  </section>
+    <!-- Modal rechazo -->
+    <div v-if="showRechazar" class="modal-overlay" @click.self="showRechazar = false">
+      <div class="modal">
+        <h3>Rechazar pedido</h3>
+        <p>Indica el motivo por el que rechazas el pedido <strong>{{ selected?.codigo }}</strong>. El coordinador recibirá una notificación.</p>
+        <label>
+          Motivo *
+          <textarea v-model="rechazarMotivo" rows="3" required placeholder="Describe el motivo del rechazo..."></textarea>
+        </label>
+        <p v-if="rechazarError" class="form-error">{{ rechazarError }}</p>
+        <div class="modal-actions">
+          <button class="btn-ghost" @click="showRechazar = false">Cancelar</button>
+          <button class="btn-reject" :disabled="actionLoading" @click="rechazar">
+            {{ actionLoading ? 'Procesando...' : 'Confirmar rechazo' }}
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
 </template>
 
 <script setup lang="ts">
-import * as L from 'leaflet';
+import { ref, computed, onMounted } from 'vue';
 import {
-  computed,
-  nextTick,
-  onBeforeUnmount,
-  onMounted,
-  reactive,
-  ref,
-  watch,
-} from 'vue';
-import type { ChecklistStepId, EvidenciaStage } from '../stores/pedidosStore';
-import { usePedidosStore } from '../stores/pedidosStore';
+  listPedidos, getPedido, confirmarPedido, rechazarPedido,
+  updateChecklist, uploadEvidencia, updateDiagnostico,
+  registrarMateriales, submitInforme as apiSubmitInforme,
+  evidenciaUrl,
+  type ApiPedido, type ApiItemPedido,
+} from '../api/pedidos';
+import { listInventario, type ApiInventario } from '../api/inventario';
 
-interface PendingEvidence {
-  id: string;
-  name: string;
-  url: string;
-  source: 'archivo' | 'camara';
-  description: string;
-}
+const pedidos = ref<ApiPedido[]>([]);
+const loading = ref(false);
+const selectedId = ref<string | null>(null);
+const selected = ref<ApiPedido | null>(null);
+const tab = ref('checklist');
 
-type TecnicoTab =
-  | 'resumen'
-  | 'ejecucion'
-  | 'evidencias'
-  | 'informe'
-  | 'reportes';
-type OperationalStatusKey =
-  | 'por-confirmar'
-  | 'confirmado'
-  | 'en-labor'
-  | 'cierre-tecnico'
-  | 'facturacion'
-  | 'dado-de-baja';
-type WorkflowPhaseKey =
-  | 'confirmacion'
-  | 'ejecucion'
-  | 'evidencias'
-  | 'cierre-tecnico'
-  | 'facturacion';
+const search = ref('');
+const filterEstado = ref('');
+const inventario = ref<ApiInventario[]>([]);
 
-const bridge = usePedidosStore();
-const tecnicoActual = ref('');
-const searchQuery = ref('');
-const selectedPedidoId = ref('');
-const activeTecnicoTab = ref<TecnicoTab>('resumen');
-const showCreatePedido = ref(false);
-const actionError = ref('');
+const actionLoading = ref(false);
+const showRechazar = ref(false);
+const rechazarMotivo = ref('');
+const rechazarError = ref('');
 
-const createForm = reactive({
-  client: '',
-  accountCode: '',
-  service: '',
-  diagnosis: '',
+const checkNota = ref<Record<string, string>>({});
+
+const evForm = ref<{ stage: 'antes' | 'despues'; descripcion: string; file: File | null }>({
+  stage: 'antes', descripcion: '', file: null,
 });
+const uploadingEv = ref(false);
+const evError = ref('');
 
-const reportForm = reactive({
-  cliente: '',
-  responsableLocal: '',
-  pedidoSolicitado: '',
-  observaciones: '',
-  recomendaciones: '',
+const diagText = ref('');
+const savingDiag = ref(false);
+const diagError = ref('');
+
+const matSel = ref({ item_id: '', nombre: '', sku: '', precio_unitario: 0, cantidad: 1 });
+const matUsados = ref<ApiItemPedido[]>([]);
+const savingMat = ref(false);
+const matError = ref('');
+
+const informeForm = ref({
+  diagnostico_final: '', responsable_local: '', pedido_solicitado: '',
+  observaciones: '', recomendaciones: '', firma: null as File | null,
 });
+const savingInforme = ref(false);
+const informeError = ref('');
 
-const additionalNote = ref('');
-const pendingAntes = ref<PendingEvidence[]>([]);
-const pendingDespues = ref<PendingEvidence[]>([]);
-
-const SERVICE_PLAYBOOK: Array<{
-  regex: RegExp;
-  summary: string;
-  tasks: string[];
-}> = [
-  {
-    regex: /electr/i,
-    summary:
-      'Prioriza seguridad electrica, continuidad de energia y pruebas funcionales del tablero.',
-    tasks: [
-      'Verifica fuente principal, llaves termomagneticas y protecciones diferenciales.',
-      'Inspecciona cableado, temperatura en puntos criticos y posibles sobrecargas.',
-      'Realiza pruebas de voltaje/corriente y confirma estabilidad de operacion.',
-      'Documenta recomendaciones preventivas para evitar reincidencias.',
-    ],
-  },
-  {
-    regex: /ups|tabler/i,
-    summary:
-      'Enfoca en autonomia, estado de baterias y salud de equipos de respaldo.',
-    tasks: [
-      'Valida estado de baterias, terminales y alarmas activas del sistema.',
-      'Ejecuta prueba de transferencia y retorno para validar respaldo.',
-      'Revisa cargas conectadas y distribucion en tableros asociados.',
-      'Registra vida util estimada y recambios recomendados.',
-    ],
-  },
-  {
-    regex: /bomba|agua|hidraul/i,
-    summary:
-      'Asegura flujo hidraulico estable y funcionamiento seguro de componentes mecanicos.',
-    tasks: [
-      'Inspecciona valvulas, sellos y tableros de control de arranque.',
-      'Confirma presion y caudal en operacion normal.',
-      'Evalua vibraciones, ruidos atipicos y temperatura de motor.',
-      'Define acciones correctivas y mantenimientos pendientes.',
-    ],
-  },
-  {
-    regex: /cable|estructur|red/i,
-    summary:
-      'Garantiza conectividad estable y orden de infraestructura de cableado.',
-    tasks: [
-      'Revisa integridad fisica de canaletas, patch panels y conectores.',
-      'Ejecuta pruebas de continuidad y certificacion de puntos.',
-      'Verifica etiquetado y orden logico de los enlaces.',
-      'Documenta puntos criticos y mejoras de capacidad.',
-    ],
-  },
-  {
-    regex: /.*/,
-    summary:
-      'Sigue el procedimiento estandar: diagnostico, ejecucion segura, validacion y cierre documentado.',
-    tasks: [
-      'Confirma alcance con el responsable antes de iniciar.',
-      'Registra evidencias antes y despues del servicio.',
-      'Valida resultado final con pruebas funcionales.',
-      'Entrega observaciones y recomendaciones al cliente.',
-    ],
-  },
-];
-
-const workflowPhases: Array<{ key: WorkflowPhaseKey; label: string }> = [
-  { key: 'confirmacion', label: 'Confirmacion' },
-  { key: 'ejecucion', label: 'Ejecucion' },
+const tabs = [
+  { key: 'checklist', label: 'Checklist' },
   { key: 'evidencias', label: 'Evidencias' },
-  { key: 'cierre-tecnico', label: 'Cierre tecnico' },
-  { key: 'facturacion', label: 'Facturacion' },
+  { key: 'diagnostico', label: 'Diagnóstico' },
+  { key: 'materiales', label: 'Materiales' },
+  { key: 'informe', label: 'Informe final' },
 ];
 
-function toOperationalStatusKey(rawStatus?: string): OperationalStatusKey {
-  const status = (rawStatus || '').toLowerCase();
-  if (status.includes('baja')) return 'dado-de-baja';
-  if (status.includes('por confirmar')) return 'por-confirmar';
-  if (status.includes('confirmado')) return 'confirmado';
-  if (status.includes('en labor') || status.includes('proceso'))
-    return 'en-labor';
-  if (status.includes('cierre')) return 'cierre-tecnico';
-  if (status.includes('factur') || status.includes('complet'))
-    return 'facturacion';
-  if (status.includes('pend')) return 'por-confirmar';
-  return 'por-confirmar';
+const filteredPedidos = computed(() => {
+  let list = pedidos.value;
+  if (search.value) {
+    const q = search.value.toLowerCase();
+    list = list.filter(p =>
+      p.codigo.toLowerCase().includes(q) ||
+      p.cliente_nombre.toLowerCase().includes(q) ||
+      p.titulo.toLowerCase().includes(q)
+    );
+  }
+  if (filterEstado.value) list = list.filter(p => p.estado === filterEstado.value);
+  return list;
+});
+
+const pedidosPorConfirmar = computed(() => pedidos.value.filter(p => p.estado === 'por-confirmar'));
+const pedidosEnCurso = computed(() => pedidos.value.filter(p => ['confirmado', 'en-labor'].includes(p.estado)));
+
+function estadoLabel(e: string) {
+  const map: Record<string, string> = {
+    'por-confirmar': 'Por confirmar', confirmado: 'Confirmado', rechazado: 'Rechazado',
+    'en-labor': 'En labor', 'cierre-tecnico': 'Cierre técnico',
+    completado: 'Completado', 'dado-de-baja': 'Dado de baja',
+  };
+  return map[e] || e;
 }
 
-const tecnicoOptions = computed(() => {
-  const names = new Set<string>([tecnicoActual.value]);
-  if (bridge.currentTecnicoNombre.value)
-    names.add(bridge.currentTecnicoNombre.value);
-  bridge.allPedidosForTecnico.value.forEach((pedido) => {
-    if (pedido.tech) names.add(pedido.tech);
+function fmtDate(iso: string) {
+  return new Date(iso).toLocaleString('es-PE', { dateStyle: 'short', timeStyle: 'short' });
+}
+
+function updateList(p: ApiPedido) {
+  const idx = pedidos.value.findIndex(x => x.id === p.id);
+  if (idx >= 0) pedidos.value[idx] = p;
+}
+
+async function loadPedidos() {
+  loading.value = true;
+  try {
+    pedidos.value = await listPedidos();
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function selectPedido(id: string) {
+  selectedId.value = id;
+  tab.value = 'checklist';
+  selected.value = await getPedido(id);
+  diagText.value = selected.value.diagnostico_tecnico || '';
+  matUsados.value = [];
+  checkNota.value = {};
+  informeForm.value = {
+    diagnostico_final: selected.value.informe?.diagnostico_final || '',
+    responsable_local: selected.value.informe?.responsable_local || '',
+    pedido_solicitado: selected.value.informe?.pedido_solicitado || '',
+    observaciones: selected.value.informe?.observaciones || '',
+    recomendaciones: selected.value.informe?.recomendaciones || '',
+    firma: null,
+  };
+}
+
+async function confirmar() {
+  if (!selected.value) return;
+  actionLoading.value = true;
+  try {
+    const p = await confirmarPedido(selected.value.id);
+    selected.value = p;
+    updateList(p);
+  } finally {
+    actionLoading.value = false;
+  }
+}
+
+async function rechazar() {
+  if (!selected.value || !rechazarMotivo.value.trim()) {
+    rechazarError.value = 'El motivo es obligatorio.';
+    return;
+  }
+  actionLoading.value = true;
+  rechazarError.value = '';
+  try {
+    const p = await rechazarPedido(selected.value.id, rechazarMotivo.value);
+    selected.value = p;
+    updateList(p);
+    showRechazar.value = false;
+    rechazarMotivo.value = '';
+  } catch (e: unknown) {
+    rechazarError.value = e instanceof Error ? e.message : 'Error al rechazar';
+  } finally {
+    actionLoading.value = false;
+  }
+}
+
+async function marcarChecklist(step_id: string) {
+  if (!selected.value) return;
+  actionLoading.value = true;
+  try {
+    const nota = checkNota.value[step_id] || '';
+    const p = await updateChecklist(selected.value.id, step_id, true, nota);
+    selected.value = p;
+    updateList(p);
+    delete checkNota.value[step_id];
+  } finally {
+    actionLoading.value = false;
+  }
+}
+
+function onFileChange(e: Event) {
+  evForm.value.file = (e.target as HTMLInputElement).files?.[0] ?? null;
+}
+
+async function uploadEv() {
+  if (!selected.value || !evForm.value.file) return;
+  uploadingEv.value = true;
+  evError.value = '';
+  try {
+    const p = await uploadEvidencia(
+      selected.value.id,
+      evForm.value.file,
+      evForm.value.descripcion,
+      evForm.value.stage,
+    );
+    selected.value = p;
+    updateList(p);
+    evForm.value = { stage: 'despues', descripcion: '', file: null };
+  } catch (e: unknown) {
+    evError.value = e instanceof Error ? e.message : 'Error al subir evidencia';
+  } finally {
+    uploadingEv.value = false;
+  }
+}
+
+async function saveDiag() {
+  if (!selected.value) return;
+  savingDiag.value = true;
+  diagError.value = '';
+  try {
+    const p = await updateDiagnostico(selected.value.id, diagText.value);
+    selected.value = p;
+    updateList(p);
+  } catch (e: unknown) {
+    diagError.value = e instanceof Error ? e.message : 'Error';
+  } finally {
+    savingDiag.value = false;
+  }
+}
+
+function onMatChange() {
+  const item = inventario.value.find(i => i.id === matSel.value.item_id);
+  if (item) {
+    matSel.value.nombre = item.nombre;
+    matSel.value.sku = item.sku;
+    matSel.value.precio_unitario = item.precio_unitario;
+  }
+}
+
+function addMat() {
+  if (!matSel.value.item_id || matSel.value.cantidad < 1) return;
+  matUsados.value.push({
+    item_id: matSel.value.item_id,
+    nombre: matSel.value.nombre,
+    sku: matSel.value.sku,
+    precio_unitario: matSel.value.precio_unitario,
+    cantidad: matSel.value.cantidad,
   });
-  return Array.from(names).sort((a, b) => a.localeCompare(b, 'es'));
-});
-
-const pedidosAsignados = computed(() => {
-  const query = searchQuery.value.trim().toLowerCase();
-  const tecnicoFiltro = tecnicoActual.value.trim().toLowerCase();
-
-  return bridge.allPedidosForTecnico.value
-    .filter(
-      (pedido) =>
-        !tecnicoFiltro || (pedido.tech || '').toLowerCase() === tecnicoFiltro,
-    )
-    .filter((pedido) => {
-      if (!query) return true;
-      return [pedido.code, pedido.client, pedido.service]
-        .join(' ')
-        .toLowerCase()
-        .includes(query);
-    });
-});
-
-const pedidosCompletados = computed(() => {
-  return pedidosAsignados.value.filter(
-    (pedido) => toOperationalStatusKey(pedido.status) === 'facturacion',
-  ).length;
-});
-
-const pedidosSinReporte = computed(() => {
-  return pedidosAsignados.value.filter(
-    (pedido) => bridge.getServiceReports(pedido.id).length === 0,
-  ).length;
-});
-
-const selectedPedido = computed(
-  () =>
-    pedidosAsignados.value.find(
-      (pedido) => pedido.id === selectedPedidoId.value,
-    ) || null,
-);
-
-const parsedCoordinates = computed(() => {
-  const raw = selectedPedido.value?.coordinates;
-  if (!raw) return null;
-  const parts = raw.split(',').map((part) => Number(part.trim()));
-  if (parts.length !== 2 || parts.some((item) => Number.isNaN(item)))
-    return null;
-  const [lat, lng] = parts;
-  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
-  return { lat, lng };
-});
-
-const selectedServiceGuide = computed(() => {
-  const service = (selectedPedido.value?.service || '').toLowerCase();
-  const match =
-    SERVICE_PLAYBOOK.find((item) => item.regex.test(service)) ||
-    SERVICE_PLAYBOOK[SERVICE_PLAYBOOK.length - 1];
-  return {
-    summary: match.summary,
-    tasks: match.tasks,
-  };
-});
-
-const selectedStatusKey = computed(() =>
-  toOperationalStatusKey(selectedPedido.value?.status),
-);
-
-const normalizedSelectedStatus = computed(() => {
-  const labels: Record<OperationalStatusKey, string> = {
-    'por-confirmar': 'Por confirmar',
-    confirmado: 'Confirmado',
-    'en-labor': 'En labor',
-    'cierre-tecnico': 'Cierre tecnico',
-    facturacion: 'Facturacion',
-    'dado-de-baja': 'Dado de baja',
-  };
-  return labels[selectedStatusKey.value];
-});
-
-const hasServiceReportForSelected = computed(() => {
-  if (!selectedPedido.value) return false;
-  return bridge.getServiceReports(selectedPedido.value.id).length > 0;
-});
-
-const currentWorkflowPhase = computed<WorkflowPhaseKey>(() => {
-  if (
-    selectedStatusKey.value === 'por-confirmar' ||
-    selectedStatusKey.value === 'confirmado'
-  ) {
-    return 'confirmacion';
-  }
-
-  if (
-    selectedStatusKey.value === 'facturacion' ||
-    hasServiceReportForSelected.value
-  ) {
-    return 'facturacion';
-  }
-
-  if (selectedStatusKey.value === 'cierre-tecnico') {
-    return 'cierre-tecnico';
-  }
-
-  if (selectedStatusKey.value === 'en-labor') {
-    if (!isExecutionComplete.value) return 'ejecucion';
-    if (!isEvidenceComplete.value) return 'evidencias';
-    return 'cierre-tecnico';
-  }
-
-  return 'confirmacion';
-});
-
-const currentWorkflowIndex = computed(() => {
-  const idx = workflowPhases.findIndex(
-    (phase) => phase.key === currentWorkflowPhase.value,
-  );
-  return idx >= 0 ? idx : 0;
-});
-
-const currentWorkflowLabel = computed(
-  () => workflowPhases[currentWorkflowIndex.value]?.label || 'Confirmacion',
-);
-
-const workflowProgress = computed(() => {
-  if (workflowPhases.length < 2) return 0;
-  return (currentWorkflowIndex.value / (workflowPhases.length - 1)) * 100;
-});
-
-const checklistForSelected = computed(() => {
-  if (!selectedPedido.value) return [];
-  return bridge.getChecklist(selectedPedido.value.id);
-});
-
-const checklistDoneCount = computed(
-  () => checklistForSelected.value.filter((step) => step.done).length,
-);
-const executionProgress = computed(() => {
-  if (!checklistForSelected.value.length) return 0;
-  return Math.round(
-    (checklistDoneCount.value / checklistForSelected.value.length) * 100,
-  );
-});
-const isExecutionComplete = computed(
-  () =>
-    checklistForSelected.value.length > 0 &&
-    checklistForSelected.value.every((step) => step.done),
-);
-
-const hasBeforeEvidence = computed(() => {
-  if (!selectedPedido.value) return false;
-  return bridge.hasEvidenciasStage(selectedPedido.value.id, 'antes');
-});
-
-const hasAfterEvidence = computed(() => {
-  if (!selectedPedido.value) return false;
-  return bridge.hasEvidenciasStage(selectedPedido.value.id, 'despues');
-});
-
-const isEvidenceComplete = computed(
-  () => hasBeforeEvidence.value && hasAfterEvidence.value,
-);
-const isExecutionTabUnlocked = computed(
-  () => selectedStatusKey.value !== 'por-confirmar',
-);
-const isEvidenceTabUnlocked = computed(
-  () => isExecutionTabUnlocked.value && isExecutionComplete.value,
-);
-const isInformeTabUnlocked = computed(
-  () => isExecutionComplete.value && isEvidenceComplete.value,
-);
-
-const reportesTecnico = computed(() =>
-  bridge.getReportsForTecnico(tecnicoActual.value),
-);
-
-const updatesForSelected = computed(() => {
-  if (!selectedPedido.value) return [];
-  return bridge.getUpdates(selectedPedido.value.id);
-});
-
-const evidenciasForSelected = computed(() => {
-  if (!selectedPedido.value) return [];
-  return bridge.getEvidencias(selectedPedido.value.id);
-});
-
-const canSendAntes = computed(() => {
-  if (!pendingAntes.value.length) return false;
-  return pendingAntes.value.every((item) => item.description.trim().length > 0);
-});
-
-const canSendDespues = computed(() => {
-  if (!pendingDespues.value.length) return false;
-  return pendingDespues.value.every(
-    (item) => item.description.trim().length > 0,
-  );
-});
-
-const canCreatePedido = computed(() => {
-  return (
-    createForm.client.trim() &&
-    createForm.service.trim() &&
-    createForm.diagnosis.trim()
-  );
-});
-
-const canSubmitServiceReport = computed(() => {
-  return (
-    isInformeTabUnlocked.value &&
-    reportForm.cliente.trim() &&
-    reportForm.responsableLocal.trim() &&
-    reportForm.pedidoSolicitado.trim() &&
-    reportForm.observaciones.trim() &&
-    reportForm.recomendaciones.trim() &&
-    hasSignature.value
-  );
-});
-
-function saveTecnicoActual() {
-  if (!tecnicoActual.value.trim() && bridge.currentTecnicoNombre.value) {
-    tecnicoActual.value = bridge.currentTecnicoNombre.value;
-  }
+  matSel.value = { item_id: '', nombre: '', sku: '', precio_unitario: 0, cantidad: 1 };
 }
 
-function openPedido(pedidoId: string) {
-  selectedPedidoId.value = pedidoId;
-}
-
-function openTab(tab: TecnicoTab) {
-  if (tab === 'ejecucion' && !isExecutionTabUnlocked.value) return;
-  if (tab === 'evidencias' && !isEvidenceTabUnlocked.value) return;
-  if (tab === 'informe' && !isInformeTabUnlocked.value) return;
-  activeTecnicoTab.value = tab;
-}
-
-async function confirmSelectedPedido() {
-  if (!selectedPedido.value || selectedStatusKey.value !== 'por-confirmar')
-    return;
-
-  actionError.value = '';
+async function saveMateriales() {
+  if (!selected.value || !matUsados.value.length) return;
+  savingMat.value = true;
+  matError.value = '';
   try {
-    await bridge.addTecnicoUpdate({
-      pedidoId: selectedPedido.value.id,
-      tecnico: tecnicoActual.value,
-      status: 'Confirmado',
-      note: 'Pedido confirmado por tecnico. Se habilita fase de ejecucion.',
-    });
-    activeTecnicoTab.value = 'ejecucion';
-  } catch (error) {
-    actionError.value =
-      error instanceof Error
-        ? error.message
-        : 'No se pudo confirmar el pedido.';
+    const p = await registrarMateriales(selected.value.id, matUsados.value);
+    selected.value = p;
+    updateList(p);
+    matUsados.value = [];
+  } catch (e: unknown) {
+    matError.value = e instanceof Error ? e.message : 'Error al registrar materiales';
+  } finally {
+    savingMat.value = false;
   }
 }
 
-function resetCreateForm() {
-  createForm.client = '';
-  createForm.accountCode = '';
-  createForm.service = '';
-  createForm.diagnosis = '';
+function onFirmaChange(e: Event) {
+  informeForm.value.firma = (e.target as HTMLInputElement).files?.[0] ?? null;
 }
 
-function createPedidoFromTecnico() {
-  if (!canCreatePedido.value) return;
-
-  const newPedido = bridge.createPedidoFromTecnico({
-    tecnico: tecnicoActual.value,
-    client: createForm.client.trim(),
-    accountCode: createForm.accountCode.trim() || undefined,
-    service: createForm.service.trim(),
-    diagnosis: createForm.diagnosis.trim(),
-    contactName: tecnicoActual.value,
-  });
-
-  selectedPedidoId.value = newPedido.id;
-  showCreatePedido.value = false;
-  resetCreateForm();
-}
-
-function isStepUnlocked(stepId: ChecklistStepId) {
-  if (!selectedPedido.value) return false;
-  return bridge.canMarkChecklistStep(selectedPedido.value.id, stepId);
-}
-
-async function completeSimpleStep(stepId: ChecklistStepId) {
-  if (!selectedPedido.value || !isStepUnlocked(stepId)) return;
-
-  actionError.value = '';
+async function submitInforme() {
+  if (!selected.value) return;
+  savingInforme.value = true;
+  informeError.value = '';
   try {
-    await bridge.markChecklistStep({
-      pedidoId: selectedPedido.value.id,
-      stepId,
-      done: true,
+    const p = await apiSubmitInforme(selected.value.id, {
+      diagnostico_final: informeForm.value.diagnostico_final,
+      responsable_local: informeForm.value.responsable_local,
+      pedido_solicitado: informeForm.value.pedido_solicitado,
+      observaciones: informeForm.value.observaciones,
+      recomendaciones: informeForm.value.recomendaciones,
+      firma_cliente: informeForm.value.firma,
     });
-  } catch (error) {
-    actionError.value =
-      error instanceof Error
-        ? error.message
-        : 'No se pudo actualizar el checklist.';
+    selected.value = p;
+    updateList(p);
+  } catch (e: unknown) {
+    informeError.value = e instanceof Error ? e.message : 'Error al enviar informe';
+  } finally {
+    savingInforme.value = false;
   }
 }
-
-async function saveAdditionalNote() {
-  if (
-    !selectedPedido.value ||
-    !additionalNote.value.trim() ||
-    !isStepUnlocked('nota-adicional')
-  )
-    return;
-
-  actionError.value = '';
-  try {
-    await bridge.markChecklistStep({
-      pedidoId: selectedPedido.value.id,
-      stepId: 'nota-adicional',
-      done: true,
-      note: additionalNote.value.trim(),
-    });
-  } catch (error) {
-    actionError.value =
-      error instanceof Error
-        ? error.message
-        : 'No se pudo guardar la nota adicional.';
-  }
-}
-
-async function readFileAsDataUrl(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ''));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-}
-
-async function onFileInput(event: Event, stage: EvidenciaStage) {
-  if (!selectedPedido.value) return;
-
-  const input = event.target as HTMLInputElement;
-  const files = Array.from(input.files || []);
-  if (!files.length) return;
-
-  const urls = await Promise.all(files.map((file) => readFileAsDataUrl(file)));
-  const mapped = urls.map((url, index) => ({
-    id: `file-${Date.now()}-${index}`,
-    name: files[index].name,
-    url,
-    source: 'archivo' as const,
-    description: '',
-  }));
-
-  if (stage === 'antes') {
-    pendingAntes.value = [...mapped, ...pendingAntes.value];
-  } else {
-    pendingDespues.value = [...mapped, ...pendingDespues.value];
-  }
-
-  input.value = '';
-}
-
-const cameraActive = ref(false);
-const cameraError = ref('');
-const cameraStage = ref<EvidenciaStage>('antes');
-const videoRef = ref<HTMLVideoElement | null>(null);
-const captureCanvasRef = ref<HTMLCanvasElement | null>(null);
-let stream: MediaStream | null = null;
-
-async function startCamera(stage: EvidenciaStage) {
-  cameraError.value = '';
-  cameraStage.value = stage;
-
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    cameraError.value = 'Este navegador no soporta captura de camara.';
-    return;
-  }
-
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'environment' },
-    });
-    if (videoRef.value) {
-      videoRef.value.srcObject = stream;
-      await videoRef.value.play();
-    }
-    cameraActive.value = true;
-  } catch {
-    cameraError.value =
-      'No se pudo acceder a la camara. Revisa permisos y vuelve a intentar.';
-    cameraActive.value = false;
-  }
-}
-
-function stopCamera() {
-  if (stream) {
-    stream.getTracks().forEach((track) => track.stop());
-    stream = null;
-  }
-
-  if (videoRef.value) {
-    videoRef.value.srcObject = null;
-  }
-
-  cameraActive.value = false;
-}
-
-function captureFromCamera() {
-  if (!videoRef.value || !captureCanvasRef.value) return;
-
-  const video = videoRef.value;
-  const canvas = captureCanvasRef.value;
-
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
-
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
-
-  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-  const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
-  const item = {
-    id: `cam-${Date.now()}`,
-    name: `captura-${new Date().toISOString().slice(11, 19).replace(/:/g, '-')}.jpg`,
-    url: dataUrl,
-    source: 'camara' as const,
-    description: '',
-  };
-
-  if (cameraStage.value === 'antes') {
-    pendingAntes.value.unshift(item);
-  } else {
-    pendingDespues.value.unshift(item);
-  }
-}
-
-async function sendEvidencias(stage: EvidenciaStage) {
-  if (!selectedPedido.value) return;
-
-  const list = stage === 'antes' ? pendingAntes.value : pendingDespues.value;
-  if (!list.length) return;
-  if (list.some((item) => !item.description.trim())) return;
-
-  actionError.value = '';
-  try {
-    await bridge.addEvidencias({
-      pedidoId: selectedPedido.value.id,
-      tecnico: tecnicoActual.value,
-      stage,
-      items: list.map((item) => ({
-        name: item.name,
-        url: item.url,
-        source: item.source,
-        description: item.description.trim(),
-      })),
-    });
-
-    if (stage === 'antes') {
-      pendingAntes.value = [];
-    } else {
-      pendingDespues.value = [];
-    }
-  } catch (error) {
-    actionError.value =
-      error instanceof Error ? error.message : 'No se pudo enviar evidencias.';
-  }
-}
-
-const signatureCanvasRef = ref<HTMLCanvasElement | null>(null);
-const hasSignature = ref(false);
-let isSigning = false;
-
-function resizeSignatureCanvas() {
-  const canvas = signatureCanvasRef.value;
-  if (!canvas) return;
-
-  const ratio = Math.max(window.devicePixelRatio || 1, 1);
-  const width = canvas.clientWidth || 520;
-  const height = canvas.clientHeight || 160;
-
-  canvas.width = width * ratio;
-  canvas.height = height * ratio;
-
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
-
-  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-  ctx.fillStyle = 'var(--color-bg-soft)';
-  ctx.fillRect(0, 0, width, height);
-  ctx.strokeStyle = 'var(--color-surface-2)';
-  ctx.lineWidth = 2;
-  hasSignature.value = false;
-}
-
-function pointerPosition(event: PointerEvent) {
-  const canvas = signatureCanvasRef.value;
-  if (!canvas) return { x: 0, y: 0 };
-
-  const rect = canvas.getBoundingClientRect();
-  return {
-    x: event.clientX - rect.left,
-    y: event.clientY - rect.top,
-  };
-}
-
-function startSignature(event: PointerEvent) {
-  const canvas = signatureCanvasRef.value;
-  if (!canvas) return;
-  isSigning = true;
-  canvas.setPointerCapture(event.pointerId);
-
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
-
-  const point = pointerPosition(event);
-  ctx.beginPath();
-  ctx.moveTo(point.x, point.y);
-}
-
-function moveSignature(event: PointerEvent) {
-  if (!isSigning) return;
-  const canvas = signatureCanvasRef.value;
-  if (!canvas) return;
-
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
-
-  const point = pointerPosition(event);
-  ctx.lineTo(point.x, point.y);
-  ctx.stroke();
-  hasSignature.value = true;
-}
-
-function endSignature(event: PointerEvent) {
-  const canvas = signatureCanvasRef.value;
-  if (!canvas) return;
-  if (canvas.hasPointerCapture(event.pointerId)) {
-    canvas.releasePointerCapture(event.pointerId);
-  }
-  isSigning = false;
-}
-
-function clearSignature() {
-  resizeSignatureCanvas();
-}
-
-async function submitServiceReport() {
-  if (
-    !selectedPedido.value ||
-    !canSubmitServiceReport.value ||
-    !signatureCanvasRef.value
-  )
-    return;
-
-  const firma = signatureCanvasRef.value.toDataURL('image/png');
-
-  actionError.value = '';
-  try {
-    await bridge.submitServiceReport({
-      pedidoId: selectedPedido.value.id,
-      tecnico: tecnicoActual.value,
-      cliente: reportForm.cliente,
-      responsableLocal: reportForm.responsableLocal.trim(),
-      pedidoSolicitado: reportForm.pedidoSolicitado.trim(),
-      observaciones: reportForm.observaciones.trim(),
-      recomendaciones: reportForm.recomendaciones.trim(),
-      firmaCliente: firma,
-    });
-
-    activeTecnicoTab.value = 'reportes';
-    clearSignature();
-  } catch (error) {
-    actionError.value =
-      error instanceof Error
-        ? error.message
-        : 'No se pudo enviar el informe tecnico.';
-  }
-}
-
-const mapContainerRef = ref<HTMLElement | null>(null);
-let mapInstance: L.Map | null = null;
-let mapMarker: L.CircleMarker | null = null;
-const DEFAULT_COORDS = { lat: -12.0464, lng: -77.0428 };
-
-function initOrUpdateMap() {
-  if (!mapContainerRef.value) return;
-
-  if (!mapInstance) {
-    mapInstance = L.map(mapContainerRef.value, {
-      zoomControl: true,
-      attributionControl: true,
-    }).setView([DEFAULT_COORDS.lat, DEFAULT_COORDS.lng], 11);
-
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '&copy; OpenStreetMap contributors',
-    }).addTo(mapInstance);
-  }
-
-  const coords = parsedCoordinates.value;
-  if (coords) {
-    mapInstance.setView([coords.lat, coords.lng], 15);
-    if (!mapMarker) {
-      mapMarker = L.circleMarker([coords.lat, coords.lng], {
-        radius: 9,
-        color: '#79e3c3',
-        fillColor: '#16a34a',
-        fillOpacity: 0.85,
-        weight: 2,
-      }).addTo(mapInstance);
-    } else {
-      mapMarker.setLatLng([coords.lat, coords.lng]);
-    }
-  } else {
-    mapInstance.setView([DEFAULT_COORDS.lat, DEFAULT_COORDS.lng], 11);
-    if (mapMarker) {
-      mapInstance.removeLayer(mapMarker);
-      mapMarker = null;
-    }
-  }
-
-  mapInstance.invalidateSize();
-}
-
-watch(
-  pedidosAsignados,
-  (next) => {
-    if (!next.length) {
-      selectedPedidoId.value = '';
-      return;
-    }
-
-    const exists = next.some((pedido) => pedido.id === selectedPedidoId.value);
-    if (!exists) selectedPedidoId.value = next[0].id;
-  },
-  { immediate: true },
-);
-
-watch(
-  selectedPedido,
-  async (pedido) => {
-    if (!pedido) return;
-
-    const noteStep = bridge
-      .getChecklist(pedido.id)
-      .find((item) => item.id === 'nota-adicional');
-    additionalNote.value = noteStep?.note || '';
-
-    reportForm.cliente = pedido.client;
-    reportForm.pedidoSolicitado = pedido.service;
-    reportForm.responsableLocal = '';
-    reportForm.observaciones = '';
-    reportForm.recomendaciones = '';
-
-    activeTecnicoTab.value = 'resumen';
-    pendingAntes.value = [];
-    pendingDespues.value = [];
-    clearSignature();
-
-    await nextTick();
-    initOrUpdateMap();
-  },
-  { immediate: true },
-);
-
-watch(activeTecnicoTab, async (tab) => {
-  if (tab === 'resumen') {
-    await nextTick();
-    initOrUpdateMap();
-  }
-
-  if (tab === 'informe') {
-    await nextTick();
-    resizeSignatureCanvas();
-  }
-});
-
-watch(
-  [isExecutionComplete, selectedStatusKey],
-  ([executionComplete, statusKey]) => {
-    if (!selectedPedido.value) return;
-    if (!executionComplete) return;
-    if (statusKey !== 'en-labor') return;
-    if (activeTecnicoTab.value !== 'evidencias') {
-      activeTecnicoTab.value = 'evidencias';
-    }
-  },
-  { immediate: true },
-);
-
-watch(
-  [isEvidenceComplete, selectedStatusKey],
-  ([evidenceComplete, statusKey]) => {
-    if (!selectedPedido.value) return;
-    if (!evidenceComplete) return;
-    if (statusKey !== 'en-labor') return;
-
-    if (activeTecnicoTab.value !== 'informe') {
-      activeTecnicoTab.value = 'informe';
-    }
-  },
-);
 
 onMounted(async () => {
-  actionError.value = '';
-  try {
-    await bridge.hydrateFromApi();
-    tecnicoActual.value =
-      bridge.currentTecnicoNombre.value || tecnicoOptions.value[0] || '';
-  } catch (error) {
-    actionError.value =
-      error instanceof Error
-        ? error.message
-        : 'No se pudo cargar pedidos asignados.';
-  }
-});
-
-onBeforeUnmount(() => {
-  stopCamera();
-  if (mapInstance) {
-    mapInstance.remove();
-    mapInstance = null;
-  }
+  await Promise.all([
+    loadPedidos(),
+    listInventario({ activo: true }).then(v => { inventario.value = v; }),
+  ]);
 });
 </script>
 
 <style scoped>
-.tecnico-view {
-  --bg-card: var(--color-surface);
-  --bg-soft: var(--color-surface-2);
-  --text-main: var(--color-text);
-  --text-muted: var(--color-text-muted);
-  --border-light: var(--color-border);
-  --radius: 4px;
-
-  display: grid;
-  grid-template-rows: 60px minmax(0, 1fr);
-  gap: 8px;
-  min-height: calc(100dvh - 24px);
-}
-
-.card {
-  background: linear-gradient(180deg, var(--color-surface-2) 0%, var(--color-surface) 100%);
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius);
-}
-
-.head {
-  padding: 8px 10px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
-}
-
-h2,
-h3,
-h4,
-strong {
-  color: var(--text-main);
-}
-
-p,
-small,
-span {
-  color: var(--color-text-muted);
-}
-
-.muted {
-  color: var(--text-muted);
-  margin: 0;
-}
-
-.head p {
-  margin: 2px 0 0;
-}
-
-.layout {
-  min-height: 0;
-  display: grid;
-  grid-template-columns: 320px 1fr;
-  gap: 10px;
-}
-
-.list {
-  min-height: 0;
-  display: grid;
-  grid-template-rows: auto 1fr;
-  overflow: hidden;
-}
-
-.list-head {
-  padding: 10px;
-  display: grid;
-  gap: 8px;
-}
-
-.list-body {
-  overflow: auto;
-  padding: 0 8px 8px;
-  display: grid;
-  gap: 6px;
-}
-
-.detail {
-  min-height: 0;
-  overflow: auto;
-  padding: 10px;
-  display: grid;
-  gap: 10px;
-  align-content: start;
-}
-
-.pedido-item {
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius);
-  background: var(--color-surface-2);
-  color: var(--color-text-soft);
-  text-align: left;
-  padding: 8px;
-  display: grid;
-  gap: 4px;
-  cursor: pointer;
-}
-
-.pedido-item.active {
-  border-color: var(--color-text-soft);
-  background: var(--color-surface-alt);
-}
-
-.item-top {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.panel {
-  border: 1px solid var(--border-light);
-  background: var(--bg-soft);
-  border-radius: var(--radius);
-  padding: 10px;
-  display: grid;
-  gap: 8px;
-}
-
-.metrics-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.metrics-grid article {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  background: var(--color-surface-2);
-  padding: 10px;
-  display: grid;
-  gap: 4px;
-}
-
-.metrics-grid article span {
-  color: var(--color-text-muted);
-}
-
-.workflow-panel {
-  background:
-    radial-gradient(circle at 0% 0%, rgba(121, 227, 195, 0.15), transparent 36%),
-    var(--color-surface);
-}
-
-.workflow-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  align-items: flex-start;
-}
-
-.workflow-head-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.workflow-rail {
-  --workflow-progress: 0%;
-  position: relative;
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  align-items: center;
-  gap: 2px;
-  padding: 8px 2px 10px;
-  min-height: 62px;
-}
-
-.workflow-rail::before,
-.workflow-rail::after {
-  content: '';
-  position: absolute;
-  left: calc(10% + 18px);
-  right: calc(10% + 18px);
-  top: 24px;
-  height: 2px;
-  border-radius: 999px;
-}
-
-.workflow-rail::before {
-  background: var(--color-border);
-}
-
-.workflow-rail::after {
-  right: auto;
-  width: calc((80% - 36px) * (var(--workflow-progress) / 100));
-  background: linear-gradient(90deg, #5bc5ab, var(--color-primary-300));
-  transition: width 0.35s ease;
-}
-
-.workflow-node {
-  position: relative;
-  z-index: 1;
-  color: var(--color-text-soft);
-  padding: 0 2px;
-  display: grid;
-  justify-items: center;
-  align-content: start;
-  gap: 2px;
-}
-
-.workflow-circle {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--color-text-muted);
-  background: var(--color-surface-2);
-  color: var(--color-text-muted);
-  font-size: 0.9rem;
-  font-weight: 700;
-  transition: all 0.25s ease;
-}
-
-.workflow-label {
-  font-size: 0.68rem;
-  line-height: 1;
-  letter-spacing: 0.03em;
-  color: var(--color-text-soft);
-  white-space: nowrap;
-}
-
-.workflow-node.done .workflow-circle {
-  background: #0f2f2b;
-  border-color: #5bc5ab;
-  color: #bdf8ea;
-}
-
-.workflow-node.active .workflow-circle {
-  background: var(--color-surface-alt);
-  border-color: var(--color-text-soft);
-  color: var(--color-text);
-  box-shadow: 0 0 0 4px rgba(122, 215, 239, 0.15);
-}
-
-.workflow-node.upcoming .workflow-circle {
-  opacity: 0.85;
-}
-
-.tecnico-tabs {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.tab {
-  border: 1px solid var(--color-border-strong);
-  background: var(--color-surface);
-  color: var(--color-text-soft);
-  border-radius: var(--radius);
-  padding: 8px 10px;
-  cursor: pointer;
-  font-weight: 600;
-}
-
-.tab.active {
-  border-color: var(--color-text-soft);
-  background: var(--color-surface-alt);
-}
-
-.tab.locked,
-.tab:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.summary-flow,
-.detail-flow {
-  display: grid;
-  gap: 10px;
-}
-
-.summary-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.summary-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 10px;
-}
-
-.summary-title {
-  display: grid;
-  gap: 4px;
-}
-
-.summary-meta {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.chip,
-.priority,
-.state-chip {
-  padding: 3px 8px;
-  border-radius: var(--radius);
-  border: 1px solid var(--color-text-muted);
-  font-size: 0.74rem;
-  color: var(--color-text-soft);
-  background: var(--color-surface);
-}
-
-.priority[data-priority='critica'] {
-  border-color: #ef4444;
-  color: #fecaca;
-}
-
-.priority[data-priority='alta'] {
-  border-color: #f59e0b;
-  color: #fde68a;
-}
-
-.priority[data-priority='media'] {
-  border-color: #22c55e;
-  color: #bbf7d0;
-}
-
-.priority[data-priority='baja'] {
-  border-color: var(--color-info);
-  color: #bae6fd;
-}
-
-.summary-grid div {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  background: var(--color-surface-2);
-  padding: 8px;
-  display: grid;
-  gap: 4px;
-}
-
-.summary-grid span {
-  color: var(--color-text-muted);
-  font-size: 0.75rem;
-}
-
-.map-panel {
-  gap: 10px;
-}
-
-.map-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  align-items: center;
-}
-
-.map-canvas {
-  height: 260px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  overflow: hidden;
-}
-
-.playbook-panel {
-  gap: 10px;
-}
-
-.playbook-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
-}
-
-.guide-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.guide-card {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  background: var(--color-surface);
-  padding: 8px;
-  display: grid;
-  gap: 6px;
-}
-
-.guide-step {
-  display: inline-flex;
-  align-items: center;
-  width: fit-content;
-  border: 1px solid var(--color-border-strong);
-  border-radius: 999px;
-  padding: 2px 8px;
-  font-size: 0.72rem;
-}
-
-.guide-card p {
-  margin: 0;
-  font-size: 0.86rem;
-  color: var(--color-text-soft);
-}
-
-.create-box {
-  border-top: 1px solid var(--color-border);
-  padding-top: 8px;
-}
-
-.create-grid,
-.service-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.wide {
-  grid-column: 1 / -1;
-}
-
-label {
-  display: grid;
-  gap: 6px;
-  color: var(--color-text-muted);
-  font-size: 0.84rem;
-}
-
-input,
-textarea,
-select {
-  background: var(--color-bg-soft);
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius);
-  color: var(--color-text);
-  padding: 8px;
-  font: inherit;
-}
-
-.actions,
-.head-actions,
-.evidence-actions,
-.step-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.btn,
-.file-btn {
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius);
-  padding: 7px 10px;
-  font-size: 0.8rem;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.btn.primary,
-.file-btn {
-  background: linear-gradient(120deg, #16a34a, #059669);
-  border-color: #79e3c3;
-  color: #f4fff8;
-}
-
-.btn.ghost {
-  background: var(--color-surface);
-  color: var(--color-text-soft);
-}
-
-.btn.mini {
-  background: var(--color-surface);
-  color: var(--color-text-soft);
-}
-
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.file-btn input {
-  display: none;
-}
-
-.execution-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  align-items: flex-start;
-}
-
-.execution-track {
-  height: 9px;
-  border-radius: 999px;
-  background: var(--color-surface-alt);
-  overflow: hidden;
-}
-
-.execution-track span {
-  display: block;
-  height: 100%;
-  background: linear-gradient(90deg, #22c55e, #14b8a6);
-}
-
-.checklist {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 10px;
-}
-
-.checklist li {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  background: var(--color-surface-2);
-  padding: 10px;
-  display: grid;
-  grid-template-columns: 34px 1fr;
-  gap: 10px;
-}
-
-.checklist li.done {
-  border-color: #2f8f65;
-}
-
-.checklist li.locked {
-  opacity: 0.65;
-}
-
-.checklist li.current {
-  border-color: var(--color-text-soft);
-}
-
-.step-index {
-  width: 30px;
-  height: 30px;
-  border-radius: 999px;
-  border: 1px solid var(--color-border-strong);
-  display: grid;
-  place-items: center;
-  font-size: 0.8rem;
-  font-weight: 700;
-}
-
-.step-content {
-  display: grid;
-  gap: 8px;
-}
-
-.step-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  align-items: center;
-}
-
-.done-pill,
-.locked-pill,
-.open-pill {
-  border-radius: 999px;
-  padding: 3px 8px;
-  font-size: 0.72rem;
-  border: 1px solid var(--color-border-strong);
-}
-
-.done-pill {
-  color: #baf6dc;
-  border-color: #2f8f65;
-}
-
-.locked-pill {
-  color: #f6d0d0;
-  border-color: #a05a5a;
-}
-
-.open-pill {
-  color: var(--color-text-muted);
-}
-
-.save-note-btn {
-  margin-top: 6px;
-}
-
-.phase-status-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.phase-status-grid article {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  background: var(--color-surface-2);
-  padding: 10px;
-  display: grid;
-  gap: 4px;
-}
-
-.phase-status-grid article.complete {
-  border-color: #2f8f65;
-}
-
-.feed {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: grid;
-  gap: 8px;
-}
-
-.feed li {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  padding: 8px;
-  display: grid;
-  gap: 3px;
-}
-
-.camera-wrap {
-  display: grid;
-  gap: 8px;
-}
-
-.camera-wrap video {
-  width: min(520px, 100%);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  background: var(--color-surface);
-}
-
-.camera-error {
-  color: #fecaca;
-  margin: 0;
-}
-
-.hidden-canvas {
-  display: none;
-}
-
-.evidence-grid,
-.evidence-sent-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 8px;
-}
-
-.evidence-item {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  background: var(--color-surface);
-  padding: 6px;
-  display: grid;
-  gap: 5px;
-}
-
-.evidence-item img {
-  width: 100%;
-  height: 112px;
-  object-fit: cover;
-  border-radius: 3px;
-}
-
-.evidence-item small {
-  color: var(--color-text-muted);
-}
-
-.evidence-item.sent {
-  border-color: #2f8f65;
-}
-
-.signature-box {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  background: var(--color-surface);
-  padding: 8px;
-  display: grid;
-  gap: 8px;
-}
-
-.signature-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  align-items: center;
-}
-
-.signature-canvas {
-  width: 100%;
-  min-height: 160px;
-  border: 1px dashed var(--color-border-strong);
-  border-radius: 4px;
-  touch-action: none;
-  background: var(--color-bg-soft);
-}
-
-.signature-preview {
-  width: min(460px, 100%);
-  border: 1px solid var(--color-border-strong);
-  border-radius: 4px;
-  background: var(--color-bg-soft);
-}
-
-.reports-list {
-  display: grid;
-  gap: 8px;
-}
-
-.report-item {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  background: var(--color-surface-2);
-  padding: 8px;
-  display: grid;
-  gap: 6px;
-}
-
-.report-item header {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.report-item p {
-  margin: 0;
-}
-
-.empty,
-.empty-detail {
-  color: var(--color-text-muted);
-}
-
-@media (max-width: 1250px) {
-  .metrics-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .summary-grid,
-  .phase-status-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .tecnico-tabs {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .guide-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .summary-meta {
-    justify-content: flex-start;
-  }
-
-  .workflow-head-actions {
-    justify-content: flex-start;
-  }
-}
-
-@media (max-width: 980px) {
-  .layout {
-    grid-template-columns: 1fr;
-  }
-
-  .list {
-    max-height: 320px;
-  }
-}
-
-@media (max-width: 760px) {
-  .create-grid,
-  .service-grid,
-  .metrics-grid,
-  .tecnico-tabs {
-    grid-template-columns: 1fr;
-  }
-
-  .head-actions,
-  .signature-head,
-  .execution-head,
-  .summary-head,
-  .playbook-head,
-  .workflow-head {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .checklist li {
-    grid-template-columns: 1fr;
-  }
-
-  .workflow-rail {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    row-gap: 8px;
-    min-height: auto;
-    padding: 0;
-  }
-
-  .workflow-rail::before,
-  .workflow-rail::after {
-    display: none;
-  }
-}
+.tecnico-view { display: flex; flex-direction: column; gap: 1rem; height: 100%; }
+
+.tv-header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 1.5rem; background: var(--surface, #1e293b); border-radius: 0.75rem; }
+.tv-header h2 { margin: 0; font-size: 1.25rem; color: var(--text-primary, #f1f5f9); }
+.tv-header p { margin: 0; font-size: 0.8rem; color: var(--text-muted, #94a3b8); }
+.header-stats { display: flex; gap: 0.5rem; }
+.stat-pill { background: var(--bg, #0f172a); border-radius: 999px; padding: 0.3rem 0.75rem; font-size: 0.8rem; color: var(--text-muted, #94a3b8); display: flex; gap: 0.35rem; align-items: center; }
+.stat-pill span { font-weight: 700; color: var(--text-primary, #f1f5f9); }
+.stat-pill.active span { color: #4ade80; }
+
+.tv-layout { display: grid; grid-template-columns: 300px 1fr; gap: 1rem; flex: 1; min-height: 0; }
+
+.tv-sidebar { background: var(--surface, #1e293b); border-radius: 0.75rem; display: flex; flex-direction: column; overflow: hidden; }
+.tv-filters { padding: 0.75rem; display: flex; flex-direction: column; gap: 0.5rem; border-bottom: 1px solid var(--border, #334155); }
+.tv-search { width: 100%; padding: 0.5rem 0.75rem; border: 1px solid var(--border, #334155); border-radius: 0.5rem; background: var(--bg, #0f172a); color: var(--text-primary, #f1f5f9); font-size: 0.8rem; }
+.tv-select { padding: 0.4rem 0.5rem; border: 1px solid var(--border, #334155); border-radius: 0.5rem; background: var(--bg, #0f172a); color: var(--text-primary, #f1f5f9); font-size: 0.75rem; width: 100%; }
+.tv-list { flex: 1; overflow-y: auto; padding: 0.5rem; display: flex; flex-direction: column; gap: 0.35rem; }
+.tv-empty { color: var(--text-muted, #94a3b8); font-size: 0.85rem; padding: 1rem; text-align: center; }
+
+.tv-item { background: var(--bg, #0f172a); border: 1px solid var(--border, #334155); border-radius: 0.5rem; padding: 0.75rem; text-align: left; cursor: pointer; transition: all 0.15s; width: 100%; }
+.tv-item:hover { border-color: #6366f1; }
+.tv-item.active { border-color: #6366f1; background: rgba(99,102,241,0.1); }
+.tv-item.urgent { border-left: 3px solid #fb923c; }
+.tv-item.pending { border-left: 3px solid #fbbf24; }
+.tv-item-top { display: flex; justify-content: space-between; margin-bottom: 0.2rem; }
+.tv-item-top strong { font-size: 0.85rem; color: var(--text-primary, #f1f5f9); }
+.tv-item-cliente { font-size: 0.8rem; color: var(--text-secondary, #cbd5e1); }
+.tv-item-titulo { font-size: 0.75rem; color: var(--text-muted, #94a3b8); margin: 0.1rem 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tv-item-bottom { display: flex; justify-content: space-between; margin-top: 0.3rem; }
+.tv-fecha { font-size: 0.7rem; color: var(--text-muted, #94a3b8); }
+.pending-indicator { font-size: 0.7rem; color: #fbbf24; font-weight: 600; margin-top: 0.25rem; }
+
+.tv-badge { font-size: 0.65rem; padding: 0.15rem 0.5rem; border-radius: 999px; font-weight: 600; text-transform: uppercase; }
+.pr-baja { background: #1e293b; color: #94a3b8; }
+.pr-media { background: rgba(234,179,8,0.2); color: #fbbf24; }
+.pr-alta { background: rgba(249,115,22,0.2); color: #fb923c; }
+.pr-critica { background: rgba(239,68,68,0.2); color: #f87171; }
+
+.tv-estado { font-size: 0.7rem; padding: 0.15rem 0.5rem; border-radius: 999px; }
+.es-por-confirmar { background: rgba(251,191,36,0.2); color: #fbbf24; }
+.es-confirmado { background: rgba(34,197,94,0.2); color: #86efac; }
+.es-en-labor { background: rgba(59,130,246,0.2); color: #93c5fd; }
+.es-cierre-tecnico { background: rgba(168,85,247,0.2); color: #d8b4fe; }
+.es-completado { background: rgba(34,197,94,0.3); color: #4ade80; }
+.es-dado-de-baja { background: rgba(100,116,139,0.2); color: #94a3b8; }
+
+.tv-main { overflow-y: auto; }
+.tv-empty-detail { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; background: var(--surface, #1e293b); border-radius: 0.75rem; color: var(--text-muted, #94a3b8); }
+.empty-icon { font-size: 3rem; margin-bottom: 0.5rem; }
+
+.tv-card { background: var(--surface, #1e293b); border-radius: 0.75rem; padding: 1.25rem; display: flex; flex-direction: column; gap: 1rem; }
+.tv-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.5rem; flex-wrap: wrap; }
+.tv-card-head h3 { margin: 0; font-size: 1rem; color: var(--text-primary, #f1f5f9); }
+.tv-card-head p { margin: 0; font-size: 0.8rem; color: var(--text-muted, #94a3b8); }
+.tv-desc { font-size: 0.8rem !important; color: var(--text-secondary, #cbd5e1) !important; margin-top: 0.25rem !important; }
+.head-badges { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; flex-shrink: 0; }
+
+.action-card { background: rgba(251,191,36,0.08); border: 1px solid rgba(251,191,36,0.3); border-radius: 0.5rem; padding: 1rem; }
+.action-card h4 { margin: 0 0 0.4rem; color: #fbbf24; font-size: 0.9rem; }
+.action-card p { margin: 0 0 0.75rem; font-size: 0.85rem; color: var(--text-secondary, #cbd5e1); }
+.action-btns { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+.tv-section h4 { margin: 0 0 0.5rem; font-size: 0.85rem; color: var(--text-secondary, #cbd5e1); }
+
+.tv-tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--border, #334155); padding-bottom: 0.5rem; flex-wrap: wrap; }
+.tab-btn { padding: 0.4rem 0.75rem; border: none; border-radius: 0.4rem; background: none; color: var(--text-muted, #94a3b8); cursor: pointer; font-size: 0.8rem; transition: all 0.15s; }
+.tab-btn:hover { color: var(--text-primary, #f1f5f9); }
+.tab-btn.active { background: rgba(99,102,241,0.15); color: #a5b4fc; font-weight: 600; }
+.tab-content { min-height: 200px; }
+
+.checklist-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 0.75rem; }
+.check-card { background: var(--bg, #0f172a); border-radius: 0.5rem; padding: 0.75rem; border: 1px solid var(--border, #334155); }
+.check-card.done { border-color: rgba(74,222,128,0.4); background: rgba(34,197,94,0.05); }
+.check-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem; }
+.check-icon { font-size: 1.1rem; color: var(--text-muted, #94a3b8); }
+.check-card.done .check-icon { color: #4ade80; }
+.check-header strong { font-size: 0.85rem; color: var(--text-primary, #f1f5f9); flex: 1; }
+.check-header small { font-size: 0.7rem; color: var(--text-muted, #94a3b8); }
+.check-nota { font-size: 0.75rem; color: var(--text-muted, #94a3b8); font-style: italic; margin-bottom: 0.4rem; }
+.check-actions { display: flex; flex-direction: column; gap: 0.4rem; }
+.check-input { padding: 0.35rem 0.5rem; border: 1px solid var(--border, #334155); border-radius: 0.4rem; background: var(--surface, #1e293b); color: var(--text-primary, #f1f5f9); font-size: 0.8rem; width: 100%; }
+
+.ev-upload { background: var(--bg, #0f172a); border-radius: 0.5rem; padding: 0.75rem; }
+.ev-upload h4 { margin: 0 0 0.5rem; font-size: 0.85rem; color: var(--text-secondary, #cbd5e1); }
+.upload-form { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.ev-select { padding: 0.4rem 0.5rem; border: 1px solid var(--border, #334155); border-radius: 0.4rem; background: var(--surface, #1e293b); color: var(--text-primary, #f1f5f9); font-size: 0.8rem; }
+.ev-input { padding: 0.4rem 0.5rem; border: 1px solid var(--border, #334155); border-radius: 0.4rem; background: var(--surface, #1e293b); color: var(--text-primary, #f1f5f9); font-size: 0.8rem; flex: 1; min-width: 150px; }
+.file-label { padding: 0.4rem 0.75rem; background: var(--surface, #1e293b); border: 1px solid var(--border, #334155); border-radius: 0.4rem; cursor: pointer; font-size: 0.8rem; color: var(--text-secondary, #cbd5e1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
+.ev-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0.75rem; margin-top: 0.75rem; }
+.ev-card { background: var(--bg, #0f172a); border-radius: 0.5rem; overflow: hidden; }
+.ev-card img { width: 100%; height: 100px; object-fit: cover; }
+.ev-info { padding: 0.4rem; display: flex; flex-direction: column; gap: 0.15rem; }
+.ev-stage { font-size: 0.65rem; padding: 0.1rem 0.35rem; border-radius: 999px; width: fit-content; }
+.stage-antes { background: rgba(234,179,8,0.2); color: #fbbf24; }
+.stage-despues { background: rgba(34,197,94,0.2); color: #4ade80; }
+.ev-info small { font-size: 0.7rem; color: var(--text-muted, #94a3b8); }
+
+.tv-textarea { width: 100%; padding: 0.6rem 0.75rem; border: 1px solid var(--border, #334155); border-radius: 0.5rem; background: var(--bg, #0f172a); color: var(--text-primary, #f1f5f9); font-size: 0.85rem; resize: vertical; font-family: inherit; box-sizing: border-box; }
+.tv-hint { font-size: 0.8rem; color: var(--text-muted, #94a3b8); margin: 0 0 0.5rem; }
+
+.item-adder { display: flex; gap: 0.5rem; margin-bottom: 0.5rem; align-items: center; flex-wrap: wrap; }
+.qty-input { padding: 0.4rem 0.5rem; border: 1px solid var(--border, #334155); border-radius: 0.4rem; background: var(--bg, #0f172a); color: var(--text-primary, #f1f5f9); font-size: 0.8rem; width: 80px; }
+.items-table { background: var(--bg, #0f172a); border-radius: 0.4rem; overflow: hidden; }
+.item-row { display: grid; grid-template-columns: 2fr 1fr 0.5fr 1fr 1fr 30px; padding: 0.4rem 0.5rem; font-size: 0.75rem; gap: 0.25rem; align-items: center; }
+.item-row.header-row { color: var(--text-muted, #94a3b8); background: rgba(255,255,255,0.03); font-weight: 600; font-size: 0.7rem; }
+.item-row:not(.header-row) { color: var(--text-secondary, #cbd5e1); border-top: 1px solid var(--border, #334155); }
+.mt-4 { margin-top: 1rem; }
+.mt-4 h5 { margin: 0 0 0.5rem; font-size: 0.8rem; color: var(--text-secondary, #cbd5e1); }
+
+.informe-done { background: rgba(34,197,94,0.08); border: 1px solid rgba(34,197,94,0.3); border-radius: 0.5rem; padding: 0.75rem; }
+.informe-done h4 { margin: 0 0 0.75rem; color: #4ade80; }
+.info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+.info-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.4rem; }
+.info-list li { display: flex; justify-content: space-between; font-size: 0.8rem; gap: 0.5rem; }
+.info-list li span { color: var(--text-muted, #94a3b8); flex-shrink: 0; }
+.info-list li strong { color: var(--text-primary, #f1f5f9); text-align: right; }
+.informe-form { display: flex; flex-direction: column; gap: 0.75rem; }
+.informe-form h4 { margin: 0; font-size: 0.9rem; color: var(--text-primary, #f1f5f9); }
+.informe-form label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.8rem; color: var(--text-muted, #94a3b8); }
+.informe-form input, .informe-form textarea { padding: 0.5rem 0.65rem; border: 1px solid var(--border, #334155); border-radius: 0.4rem; background: var(--bg, #0f172a); color: var(--text-primary, #f1f5f9); font-size: 0.85rem; font-family: inherit; }
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+.form-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.25rem; }
+.form-error { color: #f87171; font-size: 0.8rem; margin: 0; }
+
+.btn-primary { padding: 0.5rem 1rem; background: #6366f1; color: #fff; border: none; border-radius: 0.4rem; cursor: pointer; font-size: 0.85rem; font-weight: 600; }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-ghost { padding: 0.5rem 1rem; background: transparent; color: var(--text-secondary, #cbd5e1); border: 1px solid var(--border, #334155); border-radius: 0.4rem; cursor: pointer; font-size: 0.85rem; }
+.btn-confirm { padding: 0.5rem 1.25rem; background: #16a34a; color: #fff; border: none; border-radius: 0.4rem; cursor: pointer; font-size: 0.85rem; font-weight: 600; }
+.btn-confirm:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-reject { padding: 0.5rem 1.25rem; background: #dc2626; color: #fff; border: none; border-radius: 0.4rem; cursor: pointer; font-size: 0.85rem; font-weight: 600; }
+.btn-reject:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-complete { padding: 0.35rem 0.75rem; background: rgba(34,197,94,0.15); color: #4ade80; border: 1px solid rgba(34,197,94,0.3); border-radius: 0.4rem; cursor: pointer; font-size: 0.78rem; white-space: nowrap; }
+.btn-complete:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-upload { padding: 0.4rem 0.75rem; background: rgba(99,102,241,0.15); color: #a5b4fc; border: 1px solid rgba(99,102,241,0.3); border-radius: 0.4rem; cursor: pointer; font-size: 0.8rem; white-space: nowrap; }
+.btn-upload:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-add { padding: 0.4rem 0.75rem; background: rgba(99,102,241,0.15); color: #a5b4fc; border: 1px solid rgba(99,102,241,0.3); border-radius: 0.4rem; cursor: pointer; font-size: 0.8rem; white-space: nowrap; }
+.btn-remove { padding: 0.15rem 0.35rem; background: rgba(239,68,68,0.1); color: #f87171; border: none; border-radius: 0.25rem; cursor: pointer; font-size: 0.75rem; }
+
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.modal { background: var(--surface, #1e293b); border-radius: 0.75rem; padding: 1.5rem; width: 420px; max-width: 95vw; display: flex; flex-direction: column; gap: 0.75rem; }
+.modal h3 { margin: 0; color: var(--text-primary, #f1f5f9); }
+.modal p { margin: 0; font-size: 0.85rem; color: var(--text-secondary, #cbd5e1); }
+.modal label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.8rem; color: var(--text-muted, #94a3b8); }
+.modal textarea { padding: 0.5rem; border: 1px solid var(--border, #334155); border-radius: 0.4rem; background: var(--bg, #0f172a); color: var(--text-primary, #f1f5f9); resize: vertical; font-family: inherit; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
 </style>

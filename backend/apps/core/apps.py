@@ -2,6 +2,13 @@ from django.apps import AppConfig
 
 
 class CoreConfig(AppConfig):
-    default_auto_field = "django.db.models.BigAutoField"
     name = "apps.core"
-    verbose_name = "Core"
+    default_auto_field = "django.db.models.BigAutoField"
+
+    def ready(self) -> None:
+        from apps.core.db import init_indexes
+        try:
+            init_indexes()
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("MongoDB index init failed: %s", exc)

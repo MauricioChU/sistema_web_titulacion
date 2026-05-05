@@ -1,2377 +1,821 @@
 <template>
-  <section class="base-view">
+  <div class="bd-view">
+    <!-- Toast feedback -->
     <transition name="toast-fade">
-      <article
-        v-if="feedbackVisible"
-        class="crud-toast"
-        :class="feedbackType === 'success' ? 'is-success' : 'is-error'"
-        role="status"
-        aria-live="polite"
-      >
-        <div class="feedback-copy">
-          <strong>{{ feedbackType === 'success' ? 'Operacion completada' : 'Operacion fallida' }}</strong>
-          <span>{{ feedbackMessage }}</span>
-        </div>
-        <button type="button" class="feedback-close" @click="hideFeedback">Cerrar</button>
-      </article>
+      <div v-if="toast.show" class="bd-toast" :class="toast.type">
+        <strong>{{ toast.type === 'success' ? '✓' : '✕' }}</strong>
+        <span>{{ toast.msg }}</span>
+        <button @click="toast.show = false">✕</button>
+      </div>
     </transition>
 
-    <template v-if="activeModuleKey === null">
-      <header class="base-head card">
-        <h2>Base de datos</h2>
-      </header>
-
-      <section class="cards-grid">
-        <button
-          v-for="module in modules"
-          :key="module.key"
-          class="module-card card"
-          @click="openModule(module.key)"
-        >
-          <div class="module-top">
-            <h3 :class="{ 'inventory-highlight': module.key === 'inventario' }">
-              {{ module.key === 'inventario' ? 'INVENTARIO' : module.title }}
-            </h3>
-            <span>{{ module.code }}</span>
-          </div>
-          <p>{{ module.description }}</p>
-          <small>{{ module.metrics }}</small>
-          <strong class="open-link">Abrir CRUD</strong>
-        </button>
-      </section>
-    </template>
-
-    <template v-else-if="activeModuleKey === 'cuentas-clientes'">
-      <header class="crud-head card">
+    <!-- Módulo seleccionado -->
+    <template v-if="activeModule">
+      <header class="bd-header">
         <div>
-          <h2>Cuentas / Clientes</h2>
-          <p>Gestiona clientes por secciones y sus cuentas en tarjetas.</p>
+          <h2>{{ activeModule.title }}</h2>
+          <p>{{ activeModule.desc }}</p>
         </div>
-        <button class="btn ghost" @click="goBack">Regresar</button>
+        <div class="header-actions">
+          <button v-if="activeModule.key !== 'cuentas-clientes'" class="btn-primary" @click="() => openCreate()">
+            + Nuevo registro
+          </button>
+          <button class="btn-ghost" @click="activeModule = null">← Volver</button>
+        </div>
       </header>
 
-      <section class="crud-shell card">
-        <template v-if="cuentasClientesView === 'list'">
-          <article class="panel toolbar-panel clients-toolbar">
-            <div class="toolbar-copy">
-              <h3>Clientes y cuentas</h3>
-              <p>Cada cliente contiene sus cuentas asociadas en tarjetas.</p>
-            </div>
-            <div class="toolbar-actions">
-              <input
-                v-model="clientSearch"
-                class="search"
-                type="search"
-                placeholder="Buscar cliente, RUC, contacto o cuenta"
-              />
-              <button class="btn ghost" :disabled="loadingClientesCuentas" @click="loadClientesCuentasRows">
-                {{ loadingClientesCuentas ? 'Actualizando...' : 'Actualizar backend' }}
-              </button>
-              <button class="btn primary" @click="startCreateCliente">Crear nuevo cliente</button>
-            </div>
-          </article>
+      <!-- ══════════ INVENTARIO ══════════ -->
+      <div v-if="activeModule.key === 'inventario'" class="bd-table-card">
+        <div class="table-toolbar">
+          <input v-model="searchInv" type="search" placeholder="Buscar ítem..." class="bd-search" />
+          <select v-model="filterCat" class="bd-select">
+            <option value="">Todas las categorías</option>
+            <option value="epp">EPPs</option>
+            <option value="material">Materiales</option>
+            <option value="herramienta">Herramientas</option>
+            <option value="otro">Otro</option>
+          </select>
+        </div>
+        <div v-if="loadingInv" class="bd-loading">Cargando...</div>
+        <table v-else class="bd-table">
+          <thead>
+            <tr><th>SKU</th><th>Nombre</th><th>Categoría</th><th>Stock</th><th>Mín.</th><th>Precio unit.</th><th>Unidad</th><th>Estado</th><th></th></tr>
+          </thead>
+          <tbody>
+            <tr v-if="filteredInv.length === 0"><td colspan="9" class="td-empty">Sin ítems.</td></tr>
+            <tr v-for="i in filteredInv" :key="i.id" :class="{ 'row-low': i.stock_disponible <= i.stock_minimo }">
+              <td><code>{{ i.sku }}</code></td>
+              <td>{{ i.nombre }}</td>
+              <td><span class="cat-badge" :class="`cat-${i.categoria}`">{{ i.categoria }}</span></td>
+              <td><strong :class="{ 'text-danger': i.stock_disponible <= i.stock_minimo }">{{ i.stock_disponible }}</strong></td>
+              <td>{{ i.stock_minimo }}</td>
+              <td>S/ {{ i.precio_unitario.toFixed(2) }}</td>
+              <td>{{ i.unidad }}</td>
+              <td><span class="status-dot" :class="i.activo ? 'dot-green' : 'dot-gray'">{{ i.activo ? 'Activo' : 'Inactivo' }}</span></td>
+              <td class="td-actions">
+                <button class="btn-icon" @click="openEdit('inv', i)">✎</button>
+                <button class="btn-icon danger" @click="confirmDelete('inv', i.id, i.nombre)">✕</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
 
-          <article v-if="clientesCuentasLoadError" class="panel load-warning">
-            {{ clientesCuentasLoadError }}
-          </article>
-
-          <section class="clientes-stack">
-            <article v-for="cliente in filteredClients" :key="cliente.id" class="panel cliente-card">
-              <header class="cliente-head">
-                <div>
-                  <h3>{{ cliente.nombre }}</h3>
-                  <p>RUC: {{ cliente.ruc }}</p>
-                </div>
-                <span class="status-badge" :class="cliente.estado === 'Activo' ? 'active' : 'inactive'">
-                  {{ cliente.estado }}
-                </span>
-              </header>
-
-              <div class="cliente-meta">
-                <p><strong>Contacto:</strong> {{ cliente.contacto }}</p>
-                <p><strong>Cuentas:</strong> {{ getClientAccounts(cliente.id).length }}</p>
+      <!-- ══════════ CLIENTES / CUENTAS ══════════ -->
+      <div v-else-if="activeModule.key === 'cuentas-clientes'" class="bd-cc">
+        <div class="bd-cc-header">
+          <input v-model="searchCli" type="search" placeholder="Buscar cliente..." class="bd-search" />
+          <button class="btn-primary" @click="openCreate('cliente')">+ Nuevo cliente</button>
+        </div>
+        <div v-if="loadingCli" class="bd-loading">Cargando...</div>
+        <div v-else class="clientes-list">
+          <div v-if="filteredClientes.length === 0" class="bd-empty">Sin clientes.</div>
+          <div v-for="cli in filteredClientes" :key="cli.id" class="cli-card">
+            <div class="cli-head">
+              <div>
+                <strong>{{ cli.nombre }}</strong>
+                <small>RUC: {{ cli.ruc }}</small>
               </div>
-
-              <div class="cliente-actions">
-                <button class="btn mini" @click="startEditCliente(cliente)">Editar cliente</button>
-                <button class="btn mini danger" @click="askRemoveClient(cliente)">Eliminar cliente</button>
-                <button
-                  class="btn primary"
-                  :disabled="cliente.estado === 'Inactivo'"
-                  @click="startCreateCuenta(cliente.id)"
-                >
-                  Crear nueva cuenta
-                </button>
+              <div class="cli-actions">
+                <button class="btn-sm" @click="openCreate('cuenta', cli.id)">+ Cuenta</button>
+                <button class="btn-icon" @click="openEdit('cliente', cli)">✎</button>
+                <button class="btn-icon danger" @click="confirmDelete('cliente', cli.id, cli.nombre)">✕</button>
               </div>
-
-              <section class="cuentas-section">
-                <header class="cuentas-head">
-                  <h4>Cuentas del cliente</h4>
-                </header>
-
-                <div v-if="getFilteredAccountsForClient(cliente).length === 0" class="empty-cuentas">
-                  <p>No hay cuentas registradas para este cliente.</p>
-                  <button class="btn mini" :disabled="cliente.estado === 'Inactivo'" @click="startCreateCuenta(cliente.id)">
-                    Crear primera cuenta
-                  </button>
-                </div>
-
-                <div v-else class="cuentas-grid">
-                  <article
-                    v-for="cuenta in getFilteredAccountsForClient(cliente)"
-                    :key="`${cliente.id}-${cuenta.id}`"
-                    class="cuenta-card"
-                  >
-                    <div class="cuenta-top">
-                      <strong>{{ cuenta.nombre }}</strong>
-                      <span>{{ cuenta.codigo }}</span>
-                    </div>
-                    <p class="cuenta-address">{{ cuenta.direccion || '-' }}</p>
-                    <div class="cuenta-meta">
-                      <span>Distrito: {{ cuenta.distrito || '-' }}</span>
-                      <span>Coordenadas: {{ formatCuentaCoordinates(cuenta) }}</span>
-                      <span>Contacto: {{ cuenta.contacto || '-' }}</span>
-                      <span>Telefono: {{ cuenta.telefono || '-' }}</span>
-                      <span class="state-pill" :class="cuenta.estado === 'Activa' ? 'ok' : 'warn'">{{ cuenta.estado }}</span>
-                    </div>
-                    <div class="cuenta-actions">
-                      <button class="btn mini" @click="startEditCuenta(cliente.id, cuenta)">Editar</button>
-                      <button class="btn mini danger" @click="askRemoveCuenta(cliente.id, cuenta)">Eliminar</button>
-                    </div>
-                  </article>
-                </div>
-              </section>
-            </article>
-
-            <article v-if="filteredClients.length === 0" class="panel empty-clients">
-              <h3>No hay clientes para la busqueda.</h3>
-              <p>Intenta con otro termino o crea un cliente nuevo.</p>
-              <button class="btn primary" @click="startCreateCliente">Crear nuevo cliente</button>
-            </article>
-          </section>
-        </template>
-
-        <form
-          v-else-if="cuentasClientesView === 'cliente-form'"
-          class="editor card standalone-form"
-          @submit.prevent="saveClienteForm"
-        >
-          <div class="form-head">
-            <div>
-              <h3>{{ clienteFormMode === 'create' ? 'Crear nuevo cliente' : 'Editar cliente' }}</h3>
-              <p>Completa los datos del cliente y luego registra sus cuentas.</p>
             </div>
-            <button type="button" class="btn ghost" @click="goToClientesList">Volver</button>
-          </div>
-
-          <div class="editor-grid">
-            <label>
-              <span>Nombre cliente</span>
-              <input v-model.trim="clienteForm.nombre" type="text" required />
-            </label>
-            <label>
-              <span>RUC</span>
-              <input v-model.trim="clienteForm.ruc" type="text" required />
-            </label>
-            <label>
-              <span>Contacto</span>
-              <input v-model.trim="clienteForm.contacto" type="text" required />
-            </label>
-            <label>
-              <span>Estado</span>
-              <select v-model="clienteForm.estado" required>
-                <option value="Activo">Activo</option>
-                <option value="Inactivo">Inactivo</option>
-              </select>
-            </label>
-          </div>
-
-          <div class="editor-actions">
-            <button type="button" class="btn ghost" @click="goToClientesList">Cancelar</button>
-            <button type="submit" class="btn primary">Guardar cliente</button>
-          </div>
-        </form>
-
-        <form v-else class="editor card standalone-form" @submit.prevent="saveCuentaForm">
-          <div class="form-head">
-            <div>
-              <h3>{{ cuentaFormMode === 'create' ? 'Crear nueva cuenta' : 'Editar cuenta' }}</h3>
-              <p>
-                Cliente: <strong>{{ cuentaTargetClienteName || 'No definido' }}</strong>
-              </p>
+            <div class="cli-info">
+              <span>{{ cli.telefono }}</span>
+              <span>{{ cli.correo }}</span>
+              <span>{{ cli.direccion }}</span>
             </div>
-            <button type="button" class="btn ghost" @click="goToClientesList">Volver</button>
+            <!-- Cuentas del cliente -->
+            <div class="cuentas-list">
+              <div v-if="cuentasByCliente[cli.id]?.length === 0" class="cuenta-empty">Sin cuentas.</div>
+              <div v-for="cu in cuentasByCliente[cli.id] || []" :key="cu.id" class="cuenta-item">
+                <div class="cuenta-info">
+                  <span class="cuenta-num">{{ cu.numero }}</span>
+                  <strong>{{ cu.nombre }}</strong>
+                  <small>{{ cu.distrito }} — {{ cu.contacto }}</small>
+                </div>
+                <div class="cuenta-actions">
+                  <button class="btn-icon" @click="openEdit('cuenta', cu)">✎</button>
+                  <button class="btn-icon danger" @click="confirmDelete('cuenta', cu.id, cu.nombre)">✕</button>
+                </div>
+              </div>
+            </div>
           </div>
+        </div>
+      </div>
 
-          <div class="editor-grid">
-            <label>
-              <span>Codigo cuenta</span>
-              <input v-model.trim="cuentaForm.codigo" type="text" required />
-            </label>
-            <label>
-              <span>Nombre cuenta</span>
-              <input v-model.trim="cuentaForm.nombre" type="text" required />
-            </label>
-            <label>
-              <span>Direccion</span>
-              <input v-model.trim="cuentaForm.direccion" type="text" required />
-            </label>
-            <label>
-              <span>Distrito</span>
-              <input v-model.trim="cuentaForm.distrito" type="text" required />
-            </label>
-            <label>
-              <span>Latitud</span>
-              <input v-model.trim="cuentaForm.latitud" type="text" required />
-            </label>
-            <label>
-              <span>Longitud</span>
-              <input v-model.trim="cuentaForm.longitud" type="text" required />
-            </label>
-            <label>
-              <span>Contacto</span>
-              <input v-model.trim="cuentaForm.contacto" type="text" required />
-            </label>
-            <label>
-              <span>Telefono</span>
-              <input v-model.trim="cuentaForm.telefono" type="text" required />
-            </label>
-            <label>
-              <span>Estado</span>
-              <select v-model="cuentaForm.estado" required>
-                <option value="Activa">Activa</option>
-                <option value="Suspendida">Suspendida</option>
-              </select>
-            </label>
-          </div>
+      <!-- ══════════ TÉCNICOS (PERSONAL DE CAMPO) ══════════ -->
+      <div v-else-if="activeModule.key === 'personal-campo'" class="bd-table-card">
+        <div class="table-toolbar">
+          <input v-model="searchTec" type="search" placeholder="Buscar técnico..." class="bd-search" />
+        </div>
+        <div v-if="loadingTec" class="bd-loading">Cargando...</div>
+        <table v-else class="bd-table">
+          <thead>
+            <tr><th>Nombre</th><th>Especialidad</th><th>Zona</th><th>Teléfono</th><th>Pedidos activos</th><th>Estado</th><th></th></tr>
+          </thead>
+          <tbody>
+            <tr v-if="filteredTecnicos.length === 0"><td colspan="7" class="td-empty">Sin técnicos.</td></tr>
+            <tr v-for="t in filteredTecnicos" :key="t.id">
+              <td><strong>{{ t.nombre }}</strong></td>
+              <td>{{ t.especialidad }}</td>
+              <td>{{ t.zona }}</td>
+              <td>{{ t.telefono }}</td>
+              <td><span class="num-pill">{{ t.pedidos_activos }}</span></td>
+              <td><span class="status-dot" :class="t.activo ? 'dot-green' : 'dot-gray'">{{ t.activo ? 'Activo' : 'Inactivo' }}</span></td>
+              <td class="td-actions">
+                <button class="btn-icon" @click="openEdit('tec', t)">✎</button>
+                <button class="btn-icon danger" @click="confirmDelete('tec', t.id, t.nombre)">✕</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
 
-          <div class="editor-actions">
-            <button type="button" class="btn ghost" @click="goToClientesList">Cancelar</button>
-            <button type="submit" class="btn primary">Guardar cuenta</button>
-          </div>
-        </form>
-      </section>
+      <!-- ══════════ USUARIOS ══════════ -->
+      <div v-else-if="activeModule.key === 'usuarios'" class="bd-table-card">
+        <div class="table-toolbar">
+          <input v-model="searchUsr" type="search" placeholder="Buscar usuario..." class="bd-search" />
+          <select v-model="filterRol" class="bd-select">
+            <option value="">Todos los roles</option>
+            <option value="admin">Admin</option>
+            <option value="coordinador">Coordinador</option>
+            <option value="tecnico">Técnico</option>
+          </select>
+        </div>
+        <div v-if="loadingUsr" class="bd-loading">Cargando...</div>
+        <table v-else class="bd-table">
+          <thead>
+            <tr><th>Usuario</th><th>Nombre</th><th>Email</th><th>Rol</th><th>Privilegio</th><th>Estado</th><th></th></tr>
+          </thead>
+          <tbody>
+            <tr v-if="filteredUsuarios.length === 0"><td colspan="7" class="td-empty">Sin usuarios.</td></tr>
+            <tr v-for="u in filteredUsuarios" :key="u.id">
+              <td><code>{{ u.username }}</code></td>
+              <td>{{ u.nombre_completo }}</td>
+              <td>{{ u.email }}</td>
+              <td><span class="rol-badge" :class="`rol-${u.rol}`">{{ u.rol }}</span></td>
+              <td>{{ u.privilegio || '—' }}</td>
+              <td><span class="status-dot" :class="u.activo ? 'dot-green' : 'dot-gray'">{{ u.activo ? 'Activo' : 'Inactivo' }}</span></td>
+              <td class="td-actions">
+                <button class="btn-icon" @click="openEdit('usr', u)">✎</button>
+                <button class="btn-icon danger" @click="confirmDelete('usr', u.id, u.username)">✕</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </template>
 
+    <!-- ══════════ GRID DE MÓDULOS ══════════ -->
     <template v-else>
-      <header class="crud-head card">
+      <header class="bd-header">
         <div>
-          <h2>{{ activeModule?.title }}</h2>
-          <p>{{ activeModule?.description }}</p>
+          <h2>Base de datos</h2>
+          <p>Administración de entidades del sistema</p>
         </div>
-        <button class="btn ghost" @click="goBack">Regresar</button>
       </header>
-
-      <section class="crud-shell card">
-        <div class="toolbar-panel panel">
-          <input
-            v-model="searchQuery"
-            type="search"
-            class="search"
-            placeholder="Buscar en la tabla"
-          />
-          <div class="toolbar-inline-actions">
-            <button
-              v-if="activeModuleSupportsRefresh"
-              class="btn ghost"
-              :disabled="activeModuleLoading"
-              @click="loadActiveModuleRows"
-            >
-              {{ activeModuleLoading ? 'Actualizando...' : activeRefreshLabel }}
-            </button>
-            <button v-if="activeModuleKey !== 'pedidos'" class="btn primary" @click="startCreateGeneric">Nuevo registro</button>
+      <div class="modules-grid">
+        <button v-for="m in visibleModules" :key="m.key" class="module-card" @click="openModule(m)">
+          <div class="module-icon">{{ m.icon }}</div>
+          <div class="module-info">
+            <strong>{{ m.title }}</strong>
+            <p>{{ m.desc }}</p>
           </div>
-        </div>
-
-        <article v-if="activeGenericLoadError" class="panel load-warning">
-          {{ activeGenericLoadError }}
-        </article>
-
-        <article class="panel">
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th v-for="column in activeGenericColumns" :key="column.key">{{ column.label }}</th>
-                  <th class="actions">Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="row in filteredGenericRows" :key="String(row.id)">
-                  <td v-for="column in activeGenericColumns" :key="column.key">{{ String(row[column.key] ?? '-') }}</td>
-                  <td class="action-buttons">
-                    <button
-                      class="btn mini"
-                      :disabled="activeModuleKey === 'pedidos' && isPedidoBajaRow(row)"
-                      @click="startEditGeneric(row)"
-                    >
-                      Editar
-                    </button>
-                    <button
-                      class="btn mini danger"
-                      :disabled="activeModuleKey === 'pedidos' && isPedidoBajaRow(row)"
-                      @click="askRemoveGenericRow(row)"
-                    >
-                      {{ activeModuleKey === 'pedidos' ? (isPedidoBajaRow(row) ? 'Dado de baja' : 'Dar de baja') : 'Eliminar' }}
-                    </button>
-                  </td>
-                </tr>
-                <tr v-if="filteredGenericRows.length === 0">
-                  <td :colspan="activeGenericColumns.length + 1" class="empty-row">
-                    No se encontraron registros para la busqueda.
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </article>
-
-        <form v-if="isEditing" class="editor card" @submit.prevent="saveGenericRow">
-          <h3>{{ editMode === 'create' ? 'Crear registro' : 'Editar registro' }}</h3>
-          <div class="editor-grid">
-            <label v-for="column in activeGenericColumns" :key="column.key">
-              <span>{{ column.label }}</span>
-              <select
-                v-if="activeModuleKey === 'pedidos' && column.key === 'estado'"
-                v-model="formState[column.key]"
-                required
-              >
-                <option v-for="estadoOption in pedidoStatusOptions" :key="estadoOption" :value="estadoOption">
-                  {{ estadoOption }}
-                </option>
-              </select>
-              <select
-                v-else-if="activeModuleKey === 'pedidos' && column.key === 'fase'"
-                v-model="formState[column.key]"
-                required
-              >
-                <option v-for="faseOption in pedidoFaseOptions" :key="faseOption" :value="faseOption">
-                  {{ faseOption }}
-                </option>
-              </select>
-              <select
-                v-else-if="activeModuleKey === 'pedidos' && column.key === 'prioridad'"
-                v-model="formState[column.key]"
-                required
-              >
-                <option v-for="prioridadOption in pedidoPrioridadOptions" :key="prioridadOption" :value="prioridadOption">
-                  {{ prioridadOption }}
-                </option>
-              </select>
-              <input v-else v-model="formState[column.key]" type="text" :placeholder="column.label" required />
-            </label>
-          </div>
-          <div class="editor-actions">
-            <button type="button" class="btn ghost" @click="cancelEdit">Cancelar</button>
-            <button type="submit" class="btn primary">Guardar</button>
-          </div>
-        </form>
-      </section>
+          <span class="module-arrow">→</span>
+        </button>
+      </div>
     </template>
 
-    <div v-if="deleteDialog.open" class="delete-modal-backdrop" @click.self="closeDeleteDialog()">
-      <article class="delete-modal card" role="dialog" aria-modal="true" aria-labelledby="delete-dialog-title">
-        <header class="delete-modal-head">
-          <h3 id="delete-dialog-title">{{ deleteDialog.title }}</h3>
-          <p>{{ deleteDialog.message }}</p>
-        </header>
-        <div class="delete-modal-actions">
-          <button type="button" class="btn ghost" :disabled="deleteDialogLoading" @click="closeDeleteDialog()">
-            Cancelar
-          </button>
-          <button type="button" class="btn danger solid" :disabled="deleteDialogLoading" @click="confirmDeleteDialog">
-            {{
-              deleteDialogLoading
-                ? (deleteDialog.title.toLowerCase().includes('baja') ? 'Aplicando baja...' : 'Eliminando...')
-                : (deleteDialog.title.toLowerCase().includes('baja') ? 'Dar de baja' : 'Eliminar')
-            }}
+    <!-- ══════════ MODAL CREAR / EDITAR ══════════ -->
+    <div v-if="modal.open" class="modal-overlay" @click.self="modal.open = false">
+      <div class="modal">
+        <div class="modal-head">
+          <h3>{{ modal.mode === 'create' ? 'Nuevo' : 'Editar' }} {{ modal.entityLabel }}</h3>
+          <button class="modal-close" @click="modal.open = false">✕</button>
+        </div>
+
+        <!-- Inventario form -->
+        <form v-if="modal.entity === 'inv'" @submit.prevent="saveInv" class="modal-form">
+          <div class="form-row">
+            <label>SKU * <input v-model="invForm.sku" required /></label>
+            <label>Nombre * <input v-model="invForm.nombre" required /></label>
+          </div>
+          <div class="form-row">
+            <label>Categoría *
+              <select v-model="invForm.categoria" required>
+                <option value="epp">EPP</option>
+                <option value="material">Material</option>
+                <option value="herramienta">Herramienta</option>
+                <option value="otro">Otro</option>
+              </select>
+            </label>
+            <label>Unidad * <input v-model="invForm.unidad" required placeholder="unidad, rollo, caja..." /></label>
+          </div>
+          <label>Descripción <textarea v-model="invForm.descripcion" rows="2"></textarea></label>
+          <div class="form-row">
+            <label>Stock disponible * <input v-model.number="invForm.stock_disponible" type="number" min="0" required /></label>
+            <label>Stock mínimo * <input v-model.number="invForm.stock_minimo" type="number" min="0" required /></label>
+          </div>
+          <div class="form-row">
+            <label>Precio unitario (S/) * <input v-model.number="invForm.precio_unitario" type="number" min="0" step="0.01" required /></label>
+            <label>
+              Activo
+              <select v-model="invForm.activo">
+                <option :value="true">Sí</option>
+                <option :value="false">No</option>
+              </select>
+            </label>
+          </div>
+          <p v-if="modal.error" class="form-error">{{ modal.error }}</p>
+          <div class="modal-actions">
+            <button type="button" class="btn-ghost" @click="modal.open = false">Cancelar</button>
+            <button type="submit" class="btn-primary" :disabled="modal.saving">{{ modal.saving ? 'Guardando...' : 'Guardar' }}</button>
+          </div>
+        </form>
+
+        <!-- Cliente form -->
+        <form v-else-if="modal.entity === 'cliente'" @submit.prevent="saveCli" class="modal-form">
+          <label>Nombre * <input v-model="cliForm.nombre" required /></label>
+          <div class="form-row">
+            <label>RUC * <input v-model="cliForm.ruc" required /></label>
+            <label>Teléfono <input v-model="cliForm.telefono" /></label>
+          </div>
+          <label>Correo <input v-model="cliForm.correo" type="email" /></label>
+          <label>Dirección <input v-model="cliForm.direccion" /></label>
+          <p v-if="modal.error" class="form-error">{{ modal.error }}</p>
+          <div class="modal-actions">
+            <button type="button" class="btn-ghost" @click="modal.open = false">Cancelar</button>
+            <button type="submit" class="btn-primary" :disabled="modal.saving">{{ modal.saving ? 'Guardando...' : 'Guardar' }}</button>
+          </div>
+        </form>
+
+        <!-- Cuenta form -->
+        <form v-else-if="modal.entity === 'cuenta'" @submit.prevent="saveCuenta" class="modal-form">
+          <div class="form-row">
+            <label>Número/Código * <input v-model="cuentaForm.numero" required /></label>
+            <label>Nombre * <input v-model="cuentaForm.nombre" required /></label>
+          </div>
+          <label>Dirección <input v-model="cuentaForm.direccion" /></label>
+          <div class="form-row">
+            <label>Distrito <input v-model="cuentaForm.distrito" /></label>
+            <label>Tipo
+              <select v-model="cuentaForm.tipo">
+                <option value="empresa">Empresa</option>
+                <option value="hogar">Hogar</option>
+                <option value="gobierno">Gobierno</option>
+                <option value="otro">Otro</option>
+              </select>
+            </label>
+          </div>
+          <div class="form-row">
+            <label>Contacto <input v-model="cuentaForm.contacto" /></label>
+            <label>Teléfono <input v-model="cuentaForm.telefono" /></label>
+          </div>
+          <div class="form-row">
+            <label>Latitud * <input v-model.number="cuentaForm.latitud" type="number" step="any" required /></label>
+            <label>Longitud * <input v-model.number="cuentaForm.longitud" type="number" step="any" required /></label>
+          </div>
+          <p v-if="modal.error" class="form-error">{{ modal.error }}</p>
+          <div class="modal-actions">
+            <button type="button" class="btn-ghost" @click="modal.open = false">Cancelar</button>
+            <button type="submit" class="btn-primary" :disabled="modal.saving">{{ modal.saving ? 'Guardando...' : 'Guardar' }}</button>
+          </div>
+        </form>
+
+        <!-- Técnico form -->
+        <form v-else-if="modal.entity === 'tec'" @submit.prevent="saveTec" class="modal-form">
+          <label>Nombre completo * <input v-model="tecForm.nombre" required /></label>
+          <div class="form-row">
+            <label>Especialidad * <input v-model="tecForm.especialidad" required /></label>
+            <label>Zona * <input v-model="tecForm.zona" required /></label>
+          </div>
+          <label>Teléfono <input v-model="tecForm.telefono" /></label>
+          <div class="form-row">
+            <label>Latitud base * <input v-model.number="tecForm.latitud_base" type="number" step="any" required /></label>
+            <label>Longitud base * <input v-model.number="tecForm.longitud_base" type="number" step="any" required /></label>
+          </div>
+          <label>
+            Activo
+            <select v-model="tecForm.activo">
+              <option :value="true">Sí</option>
+              <option :value="false">No</option>
+            </select>
+          </label>
+          <p v-if="modal.error" class="form-error">{{ modal.error }}</p>
+          <div class="modal-actions">
+            <button type="button" class="btn-ghost" @click="modal.open = false">Cancelar</button>
+            <button type="submit" class="btn-primary" :disabled="modal.saving">{{ modal.saving ? 'Guardando...' : 'Guardar' }}</button>
+          </div>
+        </form>
+
+        <!-- Usuario form -->
+        <form v-else-if="modal.entity === 'usr'" @submit.prevent="saveUsr" class="modal-form">
+          <div class="form-row">
+            <label>Username * <input v-model="usrForm.username" required :disabled="modal.mode === 'edit'" /></label>
+            <label>Nombre completo * <input v-model="usrForm.nombre_completo" required /></label>
+          </div>
+          <label>Email * <input v-model="usrForm.email" type="email" required /></label>
+          <div class="form-row">
+            <label>Rol *
+              <select v-model="usrForm.rol" required>
+                <option value="admin">Admin</option>
+                <option value="coordinador">Coordinador</option>
+                <option value="tecnico">Técnico</option>
+              </select>
+            </label>
+            <label>Privilegio
+              <select v-model="usrForm.privilegio">
+                <option value="">Ninguno</option>
+                <option value="supervisor">Supervisor</option>
+              </select>
+            </label>
+          </div>
+          <label>
+            {{ modal.mode === 'create' ? 'Contraseña *' : 'Nueva contraseña (vacío = sin cambio)' }}
+            <input v-model="usrForm.password" type="password" :required="modal.mode === 'create'" autocomplete="new-password" />
+          </label>
+          <label>
+            Activo
+            <select v-model="usrForm.activo">
+              <option :value="true">Sí</option>
+              <option :value="false">No</option>
+            </select>
+          </label>
+          <p v-if="modal.error" class="form-error">{{ modal.error }}</p>
+          <div class="modal-actions">
+            <button type="button" class="btn-ghost" @click="modal.open = false">Cancelar</button>
+            <button type="submit" class="btn-primary" :disabled="modal.saving">{{ modal.saving ? 'Guardando...' : 'Guardar' }}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Modal eliminar -->
+    <div v-if="delModal.open" class="modal-overlay" @click.self="delModal.open = false">
+      <div class="modal modal-sm">
+        <h3>Eliminar registro</h3>
+        <p>¿Eliminar <strong>{{ delModal.name }}</strong>? Esta acción no se puede deshacer.</p>
+        <p v-if="delModal.error" class="form-error">{{ delModal.error }}</p>
+        <div class="modal-actions">
+          <button class="btn-ghost" @click="delModal.open = false">Cancelar</button>
+          <button class="btn-danger" :disabled="delModal.loading" @click="doDelete">
+            {{ delModal.loading ? 'Eliminando...' : 'Eliminar' }}
           </button>
         </div>
-      </article>
+      </div>
     </div>
-  </section>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
-import {
-  type ApiCliente,
-  type ApiCuenta,
-  type ApiInventario,
-  type ApiPedido,
-  type ApiTecnico,
-  createCliente,
-  createCuenta,
-  createInventario,
-  createTecnico,
-  darBajaPedido,
-  deleteCliente,
-  deleteCuenta,
-  deleteInventario,
-  deleteTecnico,
-  listClientes,
-  listCuentas,
-  listInventario,
-  listPedidosWithOptions,
-  listTecnicos,
-  updateCliente,
-  updateCuenta,
-  updateInventario,
-  updatePedido,
-  updateTecnico,
-} from '../api';
+import { computed, reactive, ref } from 'vue';
+import { getSessionUser, esAdmin, esSupervisor } from '../stores/sessionStore';
+import { listClientes, createCliente, updateCliente, deleteCliente, type ApiCliente } from '../api/clientes';
+import { listCuentas, createCuenta, updateCuenta, deleteCuenta, type ApiCuenta } from '../api/cuentas';
+import { listInventario, createInventario, updateInventario, deleteInventario, type ApiInventario } from '../api/inventario';
+import { listTecnicos, createTecnico, updateTecnico, deleteTecnico, type ApiTecnico } from '../api/tecnicos';
+import { listUsuarios, createUsuario, updateUsuario, deleteUsuario, type ApiUsuario } from '../api/usuarios';
 
-type ModuleKey =
-  | 'inventario'
-  | 'cuentas-clientes'
-  | 'pedidos'
-  | 'personal-campo'
-  | 'reportes';
-type GenericModuleKey =
-  | 'inventario'
-  | 'pedidos'
-  | 'personal-campo'
-  | 'reportes';
-type EditMode = 'create' | 'edit';
-type CuentasClientesView = 'list' | 'cliente-form' | 'cuenta-form';
-type EditEntity = 'generic' | 'cliente' | 'cuenta';
-type FeedbackType = 'success' | 'error';
+const currentUser = getSessionUser();
 
-interface ColumnDef {
-  key: string;
-  label: string;
-}
+interface Module { key: string; title: string; desc: string; icon: string; adminOnly?: boolean; }
 
-interface DataRow {
-  id: string;
-  [key: string]: string | number;
-}
-
-interface ModuleConfig {
-  key: ModuleKey;
-  code: string;
-  title: string;
-  description: string;
-  metrics: string;
-  columns?: ColumnDef[];
-}
-
-interface ClienteItem {
-  id: string;
-  nombre: string;
-  ruc: string;
-  contacto: string;
-  estado: 'Activo' | 'Inactivo';
-}
-
-interface CuentaItem {
-  id: string;
-  codigo: string;
-  nombre: string;
-  direccion: string;
-  distrito: string;
-  latitud: string;
-  longitud: string;
-  contacto: string;
-  telefono: string;
-  estado: 'Activa' | 'Suspendida';
-}
-
-interface DeleteDialogState {
-  open: boolean;
-  title: string;
-  message: string;
-}
-
-const modules: ModuleConfig[] = [
-  {
-    key: 'inventario',
-    code: 'INV',
-    title: 'Inventario',
-    description: 'Control de stock, almacenes y reposicion.',
-    metrics: 'Sin datos cargados',
-    columns: [
-      { key: 'sku', label: 'SKU' },
-      { key: 'descripcion', label: 'Descripcion' },
-      { key: 'categoria', label: 'Categoria' },
-      { key: 'stock', label: 'Stock' },
-      { key: 'almacen', label: 'Almacen' },
-    ],
-  },
-  {
-    key: 'cuentas-clientes',
-    code: 'CCL',
-    title: 'Cuentas / Clientes',
-    description: 'Clientes y sus cuentas asociadas.',
-    metrics: 'Sin datos cargados',
-  },
-  {
-    key: 'pedidos',
-    code: 'PDS',
-    title: 'Pedidos',
-    description: 'Pedidos operativos sincronizados desde backend.',
-    metrics: 'Sin datos cargados',
-    columns: [
-      { key: 'ot', label: 'OT' },
-      { key: 'cliente', label: 'Cliente' },
-      { key: 'servicio', label: 'Servicio' },
-      { key: 'fase', label: 'Fase' },
-      { key: 'estado', label: 'Estado' },
-      { key: 'prioridad', label: 'Prioridad' },
-      { key: 'fecha', label: 'Fecha' },
-    ],
-  },
-  {
-    key: 'personal-campo',
-    code: 'PCF',
-    title: 'Personal de campo',
-    description: 'Tecnicos, especialidades y disponibilidad.',
-    metrics: 'Sin datos cargados',
-    columns: [
-      { key: 'tecnico', label: 'Tecnico' },
-      { key: 'especialidad', label: 'Especialidad' },
-      { key: 'zona', label: 'Zona' },
-      { key: 'turno', label: 'Turno' },
-      { key: 'estado', label: 'Estado' },
-    ],
-  },
-  {
-    key: 'reportes',
-    code: 'RPT',
-    title: 'Reportes',
-    description: 'Catalogo de reportes operativos y financieros.',
-    metrics: 'Sin datos cargados',
-    columns: [
-      { key: 'reporte', label: 'Reporte' },
-      { key: 'frecuencia', label: 'Frecuencia' },
-      { key: 'propietario', label: 'Propietario' },
-      { key: 'formato', label: 'Formato' },
-      { key: 'estado', label: 'Estado' },
-    ],
-  },
+const ALL_MODULES: Module[] = [
+  { key: 'inventario', title: 'Inventario', desc: 'Items, precios y stock disponible', icon: '📦' },
+  { key: 'cuentas-clientes', title: 'Clientes y Cuentas', desc: 'Clientes y sus sedes asociadas', icon: '🏢' },
+  { key: 'personal-campo', title: 'Personal de campo', desc: 'Técnicos, zonas y especialidades', icon: '🔧' },
+  { key: 'usuarios', title: 'Usuarios', desc: 'Gestión de acceso y roles del sistema', icon: '👤', adminOnly: true },
 ];
 
-const genericRows = reactive<Record<GenericModuleKey, DataRow[]>>({
-  inventario: [],
-  pedidos: [],
-  'personal-campo': [],
-  reportes: [],
+const visibleModules = computed(() =>
+  ALL_MODULES.filter(m => !m.adminOnly || esAdmin(currentUser) || esSupervisor(currentUser))
+);
+
+const activeModule = ref<Module | null>(null);
+
+// ── Datos ──────────────────────────────────────────────────────────────────
+const inventario = ref<ApiInventario[]>([]);
+const clientes = ref<ApiCliente[]>([]);
+const cuentas = ref<ApiCuenta[]>([]);
+const tecnicos = ref<ApiTecnico[]>([]);
+const usuarios = ref<ApiUsuario[]>([]);
+
+const loadingInv = ref(false);
+const loadingCli = ref(false);
+const loadingTec = ref(false);
+const loadingUsr = ref(false);
+
+// ── Filtros ────────────────────────────────────────────────────────────────
+const searchInv = ref('');
+const filterCat = ref('');
+const searchCli = ref('');
+const searchTec = ref('');
+const searchUsr = ref('');
+const filterRol = ref('');
+
+// ── Computed filtrados ─────────────────────────────────────────────────────
+const filteredInv = computed(() => {
+  let list = inventario.value;
+  if (filterCat.value) list = list.filter(i => i.categoria === filterCat.value);
+  if (searchInv.value) {
+    const q = searchInv.value.toLowerCase();
+    list = list.filter(i => i.nombre.toLowerCase().includes(q) || i.sku.toLowerCase().includes(q));
+  }
+  return list;
 });
 
-const pedidoSnapshotById = reactive<Record<string, ApiPedido>>({});
+const filteredClientes = computed(() => {
+  if (!searchCli.value) return clientes.value;
+  const q = searchCli.value.toLowerCase();
+  return clientes.value.filter(c => c.nombre.toLowerCase().includes(q) || c.ruc.toLowerCase().includes(q));
+});
 
-const pedidoStatusLabels: Record<ApiPedido['status_operativo'], string> = {
-  'por-confirmar': 'Por confirmar',
-  confirmado: 'Confirmado',
-  'en-labor': 'En labor',
-  'cierre-tecnico': 'Cierre tecnico',
-  facturacion: 'Facturacion',
-  completado: 'Completado',
-  'dado-de-baja': 'Dado de baja',
-};
+const cuentasByCliente = computed(() => {
+  const map: Record<string, ApiCuenta[]> = {};
+  for (const cu of cuentas.value) {
+    if (!map[cu.cliente_id]) map[cu.cliente_id] = [];
+    map[cu.cliente_id].push(cu);
+  }
+  return map;
+});
 
-const pedidoFaseLabels: Record<ApiPedido['fase'], string> = {
-  creacion: 'Creacion',
-  programacion: 'Programacion',
-  seguimiento: 'Seguimiento',
-  cierre: 'Cierre',
-};
+const filteredTecnicos = computed(() => {
+  if (!searchTec.value) return tecnicos.value;
+  const q = searchTec.value.toLowerCase();
+  return tecnicos.value.filter(t => t.nombre.toLowerCase().includes(q) || t.zona.toLowerCase().includes(q));
+});
 
-const pedidoPrioridadLabels: Record<ApiPedido['prioridad'], string> = {
-  baja: 'Baja',
-  media: 'Media',
-  alta: 'Alta',
-  critica: 'Critica',
-};
+const filteredUsuarios = computed(() => {
+  let list = usuarios.value;
+  if (filterRol.value) list = list.filter(u => u.rol === filterRol.value);
+  if (searchUsr.value) {
+    const q = searchUsr.value.toLowerCase();
+    list = list.filter(u => u.username.toLowerCase().includes(q) || u.nombre_completo.toLowerCase().includes(q));
+  }
+  return list;
+});
 
-const pedidoStatusOptions = Object.values(pedidoStatusLabels);
-const pedidoFaseOptions = Object.values(pedidoFaseLabels);
-const pedidoPrioridadOptions = Object.values(pedidoPrioridadLabels);
+// ── Toast ──────────────────────────────────────────────────────────────────
+const toast = reactive({ show: false, type: 'success', msg: '' });
+function showToast(type: 'success' | 'error', msg: string) {
+  toast.type = type;
+  toast.msg = msg;
+  toast.show = true;
+  setTimeout(() => { toast.show = false; }, 4000);
+}
 
-const clientesRows = ref<ClienteItem[]>([]);
-
-const cuentasByCliente = reactive<Record<string, CuentaItem[]>>({});
-
-const activeModuleKey = ref<ModuleKey | null>(null);
-const searchQuery = ref('');
-const clientSearch = ref('');
-const loadingPedidos = ref(false);
-const pedidosLoadError = ref('');
-const loadingClientesCuentas = ref(false);
-const clientesCuentasLoadError = ref('');
-const cuentasClientesView = ref<CuentasClientesView>('list');
-const clienteFormMode = ref<EditMode>('create');
-const cuentaFormMode = ref<EditMode>('create');
-const clienteEditingId = ref<string | null>(null);
-const cuentaEditingId = ref<string | null>(null);
-const cuentaTargetClienteId = ref<string | null>(null);
-const feedbackVisible = ref(false);
-const feedbackType = ref<FeedbackType>('success');
-const feedbackMessage = ref('');
-const deleteDialogLoading = ref(false);
-const deleteDialogAction = ref<(() => Promise<void>) | null>(null);
-const deleteDialog = reactive<DeleteDialogState>({
+// ── Modal crear/editar ─────────────────────────────────────────────────────
+const modal = reactive({
   open: false,
-  title: '',
-  message: '',
-});
-let feedbackTimer: ReturnType<typeof setTimeout> | null = null;
-
-const isEditing = ref(false);
-const editMode = ref<EditMode>('create');
-const editEntity = ref<EditEntity>('generic');
-const editingId = ref<string | null>(null);
-const formState = reactive<Record<string, string>>({});
-const loadingInventario = ref(false);
-const inventarioLoadError = ref('');
-const loadingTecnicos = ref(false);
-const tecnicosLoadError = ref('');
-
-const clienteForm = reactive<ClienteItem>({
-  id: '',
-  nombre: '',
-  ruc: '',
-  contacto: '',
-  estado: 'Activo',
+  mode: 'create' as 'create' | 'edit',
+  entity: '' as string,
+  entityLabel: '',
+  editId: '',
+  saving: false,
+  error: '',
 });
 
-const cuentaForm = reactive<CuentaItem>({
-  id: '',
-  codigo: '',
-  nombre: '',
-  direccion: '',
-  distrito: '',
-  latitud: '',
-  longitud: '',
-  contacto: '',
-  telefono: '',
-  estado: 'Activa',
-});
+// Form states
+const invForm = reactive<{ sku: string; nombre: string; descripcion: string; categoria: 'epp' | 'material' | 'herramienta' | 'otro'; stock_disponible: number; stock_minimo: number; precio_unitario: number; unidad: string; activo: boolean }>({ sku: '', nombre: '', descripcion: '', categoria: 'material', stock_disponible: 0, stock_minimo: 0, precio_unitario: 0, unidad: 'unidad', activo: true });
+const cliForm = reactive({ nombre: '', ruc: '', telefono: '', correo: '', direccion: '' });
+const cuentaForm = reactive({ numero: '', nombre: '', direccion: '', distrito: '', contacto: '', telefono: '', tipo: 'empresa', latitud: -12.0464, longitud: -77.0428, cliente_id: '' });
+const tecForm = reactive({ nombre: '', especialidad: '', zona: '', telefono: '', latitud_base: -12.0464, longitud_base: -77.0428, activo: true });
+const usrForm = reactive({ username: '', nombre_completo: '', email: '', rol: 'tecnico', privilegio: '', password: '', activo: true });
 
-const activeModule = computed(
-  () => modules.find((module) => module.key === activeModuleKey.value) || null,
-);
+// ── Modal eliminar ─────────────────────────────────────────────────────────
+const delModal = reactive({ open: false, entity: '', id: '', name: '', loading: false, error: '' });
 
-const activeGenericColumns = computed(() => activeModule.value?.columns || []);
-
-const activeGenericRows = computed(() => {
-  if (!activeModuleKey.value || activeModuleKey.value === 'cuentas-clientes')
-    return [];
-  return genericRows[activeModuleKey.value as GenericModuleKey];
-});
-
-const activeModuleSupportsRefresh = computed(
-  () =>
-    activeModuleKey.value === 'pedidos' ||
-    activeModuleKey.value === 'inventario' ||
-    activeModuleKey.value === 'personal-campo',
-);
-
-const activeModuleLoading = computed(() => {
-  if (activeModuleKey.value === 'pedidos') return loadingPedidos.value;
-  if (activeModuleKey.value === 'inventario') return loadingInventario.value;
-  if (activeModuleKey.value === 'personal-campo') return loadingTecnicos.value;
-  return false;
-});
-
-const activeRefreshLabel = computed(() => {
-  if (activeModuleKey.value === 'pedidos') return 'Actualizar pedidos';
-  if (activeModuleKey.value === 'inventario') return 'Actualizar inventario';
-  if (activeModuleKey.value === 'personal-campo')
-    return 'Actualizar personal de campo';
-  return 'Actualizar';
-});
-
-const activeGenericLoadError = computed(() => {
-  if (activeModuleKey.value === 'pedidos') return pedidosLoadError.value;
-  if (activeModuleKey.value === 'inventario') return inventarioLoadError.value;
-  if (activeModuleKey.value === 'personal-campo')
-    return tecnicosLoadError.value;
-  return '';
-});
-
-const filteredGenericRows = computed(() => {
-  const query = searchQuery.value.trim().toLowerCase();
-  if (!query) return activeGenericRows.value;
-
-  return activeGenericRows.value.filter((row) =>
-    Object.values(row).some((value) =>
-      String(value).toLowerCase().includes(query),
-    ),
-  );
-});
-
-const filteredClients = computed(() => {
-  const query = clientSearch.value.trim().toLowerCase();
-  if (!query) return clientesRows.value;
-
-  return clientesRows.value.filter((cliente) => {
-    const matchesCliente = [
-      cliente.nombre,
-      cliente.ruc,
-      cliente.contacto,
-      cliente.estado,
-    ]
-      .join(' ')
-      .toLowerCase()
-      .includes(query);
-
-    if (matchesCliente) return true;
-    return getClientAccounts(cliente.id).some((cuenta) =>
-      [
-        cuenta.codigo,
-        cuenta.nombre,
-        cuenta.direccion,
-        cuenta.distrito,
-        cuenta.contacto,
-        cuenta.telefono,
-        cuenta.estado,
-      ]
-        .join(' ')
-        .toLowerCase()
-        .includes(query),
-    );
-  });
-});
-
-const cuentaTargetClienteName = computed(
-  () =>
-    clientesRows.value.find(
-      (cliente) => cliente.id === cuentaTargetClienteId.value,
-    )?.nombre || '',
-);
-
-function toErrorMessage(error: unknown, fallback: string) {
-  return error instanceof Error ? error.message : fallback;
-}
-
-function clearFeedbackTimer() {
-  if (!feedbackTimer) return;
-  clearTimeout(feedbackTimer);
-  feedbackTimer = null;
-}
-
-function hideFeedback() {
-  clearFeedbackTimer();
-  feedbackVisible.value = false;
-  feedbackMessage.value = '';
-}
-
-function showFeedback(message: string, type: FeedbackType) {
-  clearFeedbackTimer();
-  feedbackType.value = type;
-  feedbackMessage.value = message;
-  feedbackVisible.value = true;
-  feedbackTimer = setTimeout(() => {
-    feedbackVisible.value = false;
-  }, 3000);
-}
-
-function showSuccess(message: string) {
-  showFeedback(message, 'success');
-}
-
-function showError(message: string) {
-  showFeedback(message, 'error');
-}
-
-function openDeleteDialog(
-  title: string,
-  message: string,
-  action: () => Promise<void>,
-) {
-  deleteDialog.title = title;
-  deleteDialog.message = message;
-  deleteDialogAction.value = action;
-  deleteDialogLoading.value = false;
-  deleteDialog.open = true;
-}
-
-function closeDeleteDialog(force = false) {
-  if (deleteDialogLoading.value && !force) return;
-  deleteDialog.open = false;
-  deleteDialog.title = '';
-  deleteDialog.message = '';
-  deleteDialogAction.value = null;
-  deleteDialogLoading.value = false;
-}
-
-async function confirmDeleteDialog() {
-  if (!deleteDialogAction.value || deleteDialogLoading.value) return;
-
-  deleteDialogLoading.value = true;
-  try {
-    await deleteDialogAction.value();
-    closeDeleteDialog(true);
-  } catch {
-    // Keep modal open so user can retry or cancel after an API failure.
-  } finally {
-    deleteDialogLoading.value = false;
+// ── Cargar datos ───────────────────────────────────────────────────────────
+async function openModule(m: Module) {
+  activeModule.value = m;
+  switch (m.key) {
+    case 'inventario':
+      loadingInv.value = true;
+      inventario.value = await listInventario().finally(() => { loadingInv.value = false; });
+      break;
+    case 'cuentas-clientes':
+      loadingCli.value = true;
+      await Promise.all([
+        listClientes().then(v => { clientes.value = v; }),
+        listCuentas().then(v => { cuentas.value = v; }),
+      ]).finally(() => { loadingCli.value = false; });
+      break;
+    case 'personal-campo':
+      loadingTec.value = true;
+      tecnicos.value = await listTecnicos().finally(() => { loadingTec.value = false; });
+      break;
+    case 'usuarios':
+      loadingUsr.value = true;
+      usuarios.value = await listUsuarios().finally(() => { loadingUsr.value = false; });
+      break;
   }
 }
 
-function parseInteger(value: string | null | undefined, fallback: number) {
-  const parsed = Number.parseInt((value || '').trim(), 10);
-  return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-function parseCoordinate(
-  value: string | null | undefined,
-  min: number,
-  max: number,
-) {
-  const parsed = Number.parseFloat((value || '').trim());
-  if (!Number.isFinite(parsed)) return null;
-  if (parsed < min || parsed > max) return null;
-  return parsed;
-}
-
-function parseEstadoActivo(
-  estado: string | null | undefined,
-  defaultValue: boolean,
-) {
-  const normalized = (estado || '').trim().toLowerCase();
-  if (!normalized) return defaultValue;
-  return normalized !== 'inactivo' && normalized !== 'suspendida';
-}
-
-function normalizeValue(value: string | null | undefined, fallback: string) {
-  const text = (value || '').trim();
-  return text || fallback;
-}
-
-function normalizePedidoToken(value: string | null | undefined) {
-  return (value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/_/g, '-')
-    .replace(/\s+/g, '-');
-}
-
-function formatPedidoStatus(status: ApiPedido['status_operativo']) {
-  return pedidoStatusLabels[status] || 'Pendiente';
-}
-
-function formatPedidoFase(fase: ApiPedido['fase']) {
-  return pedidoFaseLabels[fase] || 'Sin fase';
-}
-
-function formatPedidoPrioridad(prioridad: ApiPedido['prioridad']) {
-  return pedidoPrioridadLabels[prioridad] || 'Media';
-}
-
-function parsePedidoStatus(
-  value: string | null | undefined,
-  fallback: ApiPedido['status_operativo'],
-): ApiPedido['status_operativo'] {
-  const normalized = normalizePedidoToken(value);
-  if (!normalized) return fallback;
-  const byCode = (
-    Object.keys(pedidoStatusLabels) as Array<ApiPedido['status_operativo']>
-  ).find((item) => item === normalized);
-  if (byCode) return byCode;
-  const byLabel = (
-    Object.entries(pedidoStatusLabels) as Array<
-      [ApiPedido['status_operativo'], string]
-    >
-  ).find(([, label]) => normalizePedidoToken(label) === normalized);
-  return byLabel?.[0] || fallback;
-}
-
-function parsePedidoFase(
-  value: string | null | undefined,
-  fallback: ApiPedido['fase'],
-): ApiPedido['fase'] {
-  const normalized = normalizePedidoToken(value);
-  if (!normalized) return fallback;
-  const byCode = (
-    Object.keys(pedidoFaseLabels) as Array<ApiPedido['fase']>
-  ).find((item) => item === normalized);
-  if (byCode) return byCode;
-  const byLabel = (
-    Object.entries(pedidoFaseLabels) as Array<[ApiPedido['fase'], string]>
-  ).find(([, label]) => normalizePedidoToken(label) === normalized);
-  return byLabel?.[0] || fallback;
-}
-
-function parsePedidoPrioridad(
-  value: string | null | undefined,
-  fallback: ApiPedido['prioridad'],
-): ApiPedido['prioridad'] {
-  const normalized = normalizePedidoToken(value);
-  if (!normalized) return fallback;
-  const byCode = (
-    Object.keys(pedidoPrioridadLabels) as Array<ApiPedido['prioridad']>
-  ).find((item) => item === normalized);
-  if (byCode) return byCode;
-  const byLabel = (
-    Object.entries(pedidoPrioridadLabels) as Array<
-      [ApiPedido['prioridad'], string]
-    >
-  ).find(([, label]) => normalizePedidoToken(label) === normalized);
-  return byLabel?.[0] || fallback;
-}
-
-function isPedidoStatusDadoDeBaja(value: string | null | undefined) {
-  return parsePedidoStatus(value, 'por-confirmar') === 'dado-de-baja';
-}
-
-function isPedidoBajaRow(row: DataRow) {
-  if (activeModuleKey.value !== 'pedidos') return false;
-  return isPedidoStatusDadoDeBaja(String(row.estado || ''));
-}
-
-function mapClienteToItem(cliente: ApiCliente): ClienteItem {
-  return {
-    id: String(cliente.id),
-    nombre: normalizeValue(cliente.nombre, 'Sin nombre'),
-    ruc: normalizeValue(cliente.documento, '-'),
-    contacto: normalizeValue(cliente.telefono, '-'),
-    estado: cliente.activo ? 'Activo' : 'Inactivo',
-  };
-}
-
-function mapCuentaToItem(cuenta: ApiCuenta): CuentaItem {
-  return {
-    id: String(cuenta.id),
-    codigo: normalizeValue(cuenta.numero, '-'),
-    nombre: normalizeValue(cuenta.nombre, '-'),
-    direccion: (cuenta.direccion || '').trim(),
-    distrito: (cuenta.distrito || '').trim(),
-    latitud: Number.isFinite(cuenta.latitud) ? String(cuenta.latitud) : '',
-    longitud: Number.isFinite(cuenta.longitud) ? String(cuenta.longitud) : '',
-    contacto: (cuenta.contacto || '').trim(),
-    telefono: (cuenta.telefono || '').trim(),
-    estado: cuenta.activa ? 'Activa' : 'Suspendida',
-  };
-}
-
-function formatCuentaCoordinates(cuenta: CuentaItem) {
-  const lat = (cuenta.latitud || '').trim();
-  const lon = (cuenta.longitud || '').trim();
-  if (!lat || !lon) return '-';
-  return `${lat}, ${lon}`;
-}
-
-function mapInventarioToDataRow(item: ApiInventario): DataRow {
-  return {
-    id: String(item.id),
-    sku: normalizeValue(item.sku, '-'),
-    descripcion: normalizeValue(item.descripcion, '-'),
-    categoria: normalizeValue(item.categoria, '-'),
-    stock: item.stock,
-    almacen: normalizeValue(item.almacen, '-'),
-  };
-}
-
-function mapTecnicoToDataRow(tecnico: ApiTecnico): DataRow {
-  return {
-    id: String(tecnico.id),
-    tecnico: normalizeValue(tecnico.nombre, '-'),
-    especialidad: normalizeValue(tecnico.especialidad, '-'),
-    zona: normalizeValue(tecnico.zona, '-'),
-    turno: tecnico.capacidad_diaria,
-    estado: tecnico.activo ? 'Activo' : 'Inactivo',
-  };
-}
-
-function mapPedidoToDataRow(pedido: ApiPedido): DataRow {
-  return {
-    id: String(pedido.id),
-    ot: `OT-${String(pedido.id).padStart(4, '0')}`,
-    cliente: normalizeValue(pedido.cliente_nombre, 'Sin cliente'),
-    servicio: normalizeValue(
-      pedido.tipo_servicio || pedido.titulo,
-      'Sin servicio',
-    ),
-    fase: formatPedidoFase(pedido.fase),
-    estado: formatPedidoStatus(pedido.status_operativo),
-    prioridad: formatPedidoPrioridad(pedido.prioridad),
-    fecha: normalizeValue(
-      (pedido.fecha_programada || pedido.created_at || '').slice(0, 10),
-      'Sin fecha',
-    ),
-  };
-}
-
-async function loadPedidosRows() {
-  loadingPedidos.value = true;
-  pedidosLoadError.value = '';
-
-  try {
-    const pedidos = await listPedidosWithOptions({ includeBajas: true });
-    const nextIds = new Set<string>();
-    pedidos.forEach((pedido) => {
-      const id = String(pedido.id);
-      nextIds.add(id);
-      pedidoSnapshotById[id] = pedido;
-    });
-    Object.keys(pedidoSnapshotById).forEach((id) => {
-      if (!nextIds.has(id)) {
-        delete pedidoSnapshotById[id];
-      }
-    });
-    genericRows.pedidos = pedidos.map(mapPedidoToDataRow);
-  } catch (error) {
-    pedidosLoadError.value = toErrorMessage(
-      error,
-      'No se pudo cargar pedidos desde backend.',
-    );
-  } finally {
-    loadingPedidos.value = false;
-  }
-}
-
-async function loadInventarioRows() {
-  loadingInventario.value = true;
-  inventarioLoadError.value = '';
-
-  try {
-    const inventario = await listInventario();
-    genericRows.inventario = inventario.map(mapInventarioToDataRow);
-  } catch (error) {
-    inventarioLoadError.value = toErrorMessage(
-      error,
-      'No se pudo cargar inventario desde backend.',
-    );
-  } finally {
-    loadingInventario.value = false;
-  }
-}
-
-async function loadTecnicosRows() {
-  loadingTecnicos.value = true;
-  tecnicosLoadError.value = '';
-
-  try {
-    const tecnicos = await listTecnicos();
-    genericRows['personal-campo'] = tecnicos.map(mapTecnicoToDataRow);
-  } catch (error) {
-    tecnicosLoadError.value = toErrorMessage(
-      error,
-      'No se pudo cargar personal de campo desde backend.',
-    );
-  } finally {
-    loadingTecnicos.value = false;
-  }
-}
-
-async function loadClientesCuentasRows() {
-  loadingClientesCuentas.value = true;
-  clientesCuentasLoadError.value = '';
-
-  try {
-    const [clientes, cuentas] = await Promise.all([
-      listClientes(),
-      listCuentas(),
-    ]);
-
-    clientesRows.value = clientes.map(mapClienteToItem);
-
-    const grouped: Record<string, CuentaItem[]> = {};
-    cuentas.forEach((cuenta) => {
-      const mapped = mapCuentaToItem(cuenta);
-      const clienteId = String(cuenta.cliente);
-      if (!grouped[clienteId]) grouped[clienteId] = [];
-      grouped[clienteId].push(mapped);
-    });
-
-    Object.keys(cuentasByCliente).forEach((key) => {
-      delete cuentasByCliente[key];
-    });
-    Object.assign(cuentasByCliente, grouped);
-  } catch (error) {
-    clientesCuentasLoadError.value = toErrorMessage(
-      error,
-      'No se pudo cargar clientes/cuentas desde backend.',
-    );
-  } finally {
-    loadingClientesCuentas.value = false;
-  }
-}
-
-async function loadActiveModuleRows() {
-  if (activeModuleKey.value === 'pedidos') {
-    await loadPedidosRows();
-    return;
-  }
-  if (activeModuleKey.value === 'inventario') {
-    await loadInventarioRows();
-    return;
-  }
-  if (activeModuleKey.value === 'personal-campo') {
-    await loadTecnicosRows();
-  }
-}
-
-function openModule(key: ModuleKey) {
-  activeModuleKey.value = key;
-  searchQuery.value = '';
-  clientSearch.value = '';
-  hideFeedback();
-  closeDeleteDialog(true);
-  if (key === 'cuentas-clientes') {
-    goToClientesList();
-    void loadClientesCuentasRows();
-  }
-  if (key === 'pedidos' || key === 'inventario' || key === 'personal-campo') {
-    void loadActiveModuleRows();
-  }
-  cancelEdit();
-}
-
-function goBack() {
-  activeModuleKey.value = null;
-  searchQuery.value = '';
-  clientSearch.value = '';
-  hideFeedback();
-  closeDeleteDialog(true);
-  goToClientesList();
-  cancelEdit();
-}
-
-function resetGenericForm() {
-  Object.keys(formState).forEach((key) => {
-    delete formState[key];
-  });
-
-  activeGenericColumns.value.forEach((column) => {
-    formState[column.key] = '';
-  });
-}
-
-function startCreateGeneric() {
-  if (activeModuleKey.value === 'pedidos') {
-    showError('La creacion de pedidos se realiza desde el modulo de Pedidos.');
-    return;
-  }
-
-  editEntity.value = 'generic';
-  editMode.value = 'create';
-  editingId.value = null;
-  resetGenericForm();
-  isEditing.value = true;
-}
-
-function startEditGeneric(row: DataRow) {
-  editEntity.value = 'generic';
-  editMode.value = 'edit';
-  editingId.value = String(row.id);
-  resetGenericForm();
-  activeGenericColumns.value.forEach((column) => {
-    formState[column.key] = String(row[column.key] ?? '');
-  });
-  isEditing.value = true;
-}
-
-async function saveGenericRow() {
-  if (!activeModuleKey.value || activeModuleKey.value === 'cuentas-clientes')
-    return;
-
-  const moduleKey = activeModuleKey.value as GenericModuleKey;
-
-  if (moduleKey === 'pedidos') {
-    pedidosLoadError.value = '';
-    if (editMode.value === 'create') {
-      showError('La creacion de pedidos no esta disponible en esta vista.');
-      return;
-    }
-    if (!editingId.value) {
-      showError('No se pudo identificar el pedido a actualizar.');
-      return;
-    }
-
-    const currentPedido = pedidoSnapshotById[editingId.value];
-    if (!currentPedido) {
-      pedidosLoadError.value =
-        'No se encontro el pedido en cache. Recarga la tabla.';
-      showError(pedidosLoadError.value);
-      return;
-    }
-
-    const nextStatus = parsePedidoStatus(
-      formState.estado,
-      currentPedido.status_operativo,
-    );
-    if (
-      currentPedido.status_operativo === 'dado-de-baja' &&
-      nextStatus !== currentPedido.status_operativo
-    ) {
-      const message = 'Un pedido dado de baja es final y no puede reactivarse.';
-      pedidosLoadError.value = message;
-      showError(message);
-      return;
-    }
-
-    const payload = {
-      fase: parsePedidoFase(formState.fase, currentPedido.fase),
-      prioridad: parsePedidoPrioridad(
-        formState.prioridad,
-        currentPedido.prioridad,
-      ),
-      status_operativo: nextStatus,
-    };
-
-    try {
-      await updatePedido(editingId.value, payload);
-      await loadPedidosRows();
-      cancelEdit();
-      showSuccess('Pedido actualizado correctamente.');
-    } catch (error) {
-      const message = toErrorMessage(
-        error,
-        'No se pudo actualizar el pedido en backend.',
-      );
-      pedidosLoadError.value = message;
-      showError(message);
-    }
-    return;
-  }
-
-  if (moduleKey === 'inventario') {
-    inventarioLoadError.value = '';
-    const isCreate = editMode.value === 'create';
-    try {
-      const payload = {
-        sku: formState.sku?.trim() || '',
-        descripcion: formState.descripcion?.trim() || '',
-        categoria: formState.categoria?.trim() || '',
-        stock: parseInteger(formState.stock, 0),
-        almacen: formState.almacen?.trim() || 'principal',
-      };
-
-      if (editMode.value === 'create') {
-        await createInventario(payload);
-      } else if (editingId.value) {
-        await updateInventario(editingId.value, payload);
-      }
-
-      await loadInventarioRows();
-      cancelEdit();
-      showSuccess(
-        isCreate
-          ? 'Item de inventario creado correctamente.'
-          : 'Item de inventario actualizado correctamente.',
-      );
-    } catch (error) {
-      const message = toErrorMessage(
-        error,
-        'No se pudo guardar inventario en backend.',
-      );
-      inventarioLoadError.value = message;
-      showError(message);
-    }
-    return;
-  }
-
-  if (moduleKey === 'personal-campo') {
-    tecnicosLoadError.value = '';
-    const isCreate = editMode.value === 'create';
-    try {
-      const payload = {
-        nombre: formState.tecnico?.trim() || '',
-        especialidad: formState.especialidad?.trim() || '',
-        zona: formState.zona?.trim() || '',
-        capacidad_diaria: parseInteger(formState.turno, 5),
-        activo: parseEstadoActivo(formState.estado, true),
-      };
-
-      if (editMode.value === 'create') {
-        await createTecnico({
-          ...payload,
-          latitud_base: 0,
-          longitud_base: 0,
-        });
-      } else if (editingId.value) {
-        await updateTecnico(editingId.value, payload);
-      }
-
-      await loadTecnicosRows();
-      cancelEdit();
-      showSuccess(
-        isCreate
-          ? 'Tecnico creado correctamente.'
-          : 'Tecnico actualizado correctamente.',
-      );
-    } catch (error) {
-      const message = toErrorMessage(
-        error,
-        'No se pudo guardar personal de campo en backend.',
-      );
-      tecnicosLoadError.value = message;
-      showError(message);
-    }
-    return;
-  }
-
-  const targetRows = genericRows[moduleKey];
-
-  if (editMode.value === 'create') {
-    const newRow: DataRow = {
-      id: `${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-    };
-
-    activeGenericColumns.value.forEach((column) => {
-      newRow[column.key] = formState[column.key]?.trim() || '-';
-    });
-
-    targetRows.unshift(newRow);
+// ── Abrir modal ────────────────────────────────────────────────────────────
+function openCreate(entity?: string, clienteId?: string) {
+  modal.mode = 'create';
+  if (entity) {
+    modal.entity = entity;
   } else {
-    const rowIndex = targetRows.findIndex((row) => row.id === editingId.value);
-    if (rowIndex >= 0) {
-      const updatedRow: DataRow = { ...targetRows[rowIndex] };
-      activeGenericColumns.value.forEach((column) => {
-        updatedRow[column.key] = formState[column.key]?.trim() || '-';
-      });
-      targetRows[rowIndex] = updatedRow;
-    }
+    const key = activeModule.value!.key;
+    modal.entity = key === 'inventario' ? 'inv'
+      : key === 'personal-campo' ? 'tec'
+      : key === 'usuarios' ? 'usr'
+      : 'inv';
   }
+  modal.editId = '';
+  modal.error = '';
+  modal.entityLabel = { inv: 'ítem de inventario', cliente: 'cliente', cuenta: 'cuenta', tec: 'técnico', usr: 'usuario' }[modal.entity] || 'registro';
 
-  cancelEdit();
-  showSuccess(
-    editMode.value === 'create'
-      ? 'Registro creado en vista local.'
-      : 'Registro actualizado en vista local.',
-  );
+  if (modal.entity === 'inv') Object.assign(invForm, { sku: '', nombre: '', descripcion: '', categoria: 'material', stock_disponible: 0, stock_minimo: 0, precio_unitario: 0, unidad: 'unidad', activo: true });
+  if (modal.entity === 'cliente') Object.assign(cliForm, { nombre: '', ruc: '', telefono: '', correo: '', direccion: '' });
+  if (modal.entity === 'cuenta') Object.assign(cuentaForm, { numero: '', nombre: '', direccion: '', distrito: '', contacto: '', telefono: '', tipo: 'empresa', latitud: -12.0464, longitud: -77.0428, cliente_id: clienteId || '' });
+  if (modal.entity === 'tec') Object.assign(tecForm, { nombre: '', especialidad: '', zona: '', telefono: '', latitud_base: -12.0464, longitud_base: -77.0428, activo: true });
+  if (modal.entity === 'usr') Object.assign(usrForm, { username: '', nombre_completo: '', email: '', rol: 'tecnico', privilegio: '', password: '', activo: true });
+
+  modal.open = true;
 }
 
-function askRemoveGenericRow(row: DataRow) {
-  if (!activeModuleKey.value || activeModuleKey.value === 'cuentas-clientes')
-    return;
+function openEdit(entity: string, item: unknown) {
+  modal.mode = 'edit';
+  modal.entity = entity;
+  modal.editId = (item as Record<string, unknown>).id as string;
+  modal.error = '';
+  modal.entityLabel = { inv: 'ítem de inventario', cliente: 'cliente', cuenta: 'cuenta', tec: 'técnico', usr: 'usuario' }[entity] || 'registro';
 
-  const moduleKey = activeModuleKey.value as GenericModuleKey;
-  const primaryColumn = activeGenericColumns.value[0]?.key;
-  const rowLabel = String(
-    (primaryColumn && row[primaryColumn]) || row.id || 'registro',
-  );
-
-  if (moduleKey === 'inventario') {
-    openDeleteDialog(
-      'Eliminar item de inventario',
-      `Se eliminara ${rowLabel}. Esta accion no se puede deshacer.`,
-      async () => {
-        await executeRemoveGenericRow(String(row.id), rowLabel);
-      },
-    );
-    return;
+  if (entity === 'inv') {
+    const i = item as unknown as ApiInventario;
+    Object.assign(invForm, { sku: i.sku, nombre: i.nombre, descripcion: i.descripcion, categoria: i.categoria, stock_disponible: i.stock_disponible, stock_minimo: i.stock_minimo, precio_unitario: i.precio_unitario, unidad: i.unidad, activo: i.activo });
+  } else if (entity === 'cliente') {
+    const c = item as unknown as ApiCliente;
+    Object.assign(cliForm, { nombre: c.nombre, ruc: c.ruc, telefono: c.telefono, correo: c.correo, direccion: c.direccion });
+  } else if (entity === 'cuenta') {
+    const c = item as unknown as ApiCuenta;
+    Object.assign(cuentaForm, { numero: c.numero, nombre: c.nombre, direccion: c.direccion, distrito: c.distrito, contacto: c.contacto, telefono: c.telefono, tipo: c.tipo, latitud: c.latitud, longitud: c.longitud, cliente_id: c.cliente_id });
+  } else if (entity === 'tec') {
+    const t = item as unknown as ApiTecnico;
+    Object.assign(tecForm, { nombre: t.nombre, especialidad: t.especialidad, zona: t.zona, telefono: t.telefono, latitud_base: t.latitud_base, longitud_base: t.longitud_base, activo: t.activo });
+  } else if (entity === 'usr') {
+    const u = item as unknown as ApiUsuario;
+    Object.assign(usrForm, { username: u.username, nombre_completo: u.nombre_completo, email: u.email, rol: u.rol, privilegio: u.privilegio || '', password: '', activo: u.activo });
   }
-
-  if (moduleKey === 'personal-campo') {
-    openDeleteDialog(
-      'Eliminar tecnico',
-      `Se eliminara ${rowLabel}. Esta accion no se puede deshacer.`,
-      async () => {
-        await executeRemoveGenericRow(String(row.id), rowLabel);
-      },
-    );
-    return;
-  }
-
-  if (moduleKey === 'pedidos') {
-    if (isPedidoBajaRow(row)) {
-      showSuccess('Este pedido ya se encuentra dado de baja.');
-      return;
-    }
-
-    openDeleteDialog(
-      'Dar de baja pedido',
-      `Se dara de baja ${rowLabel}. Esta accion es final y no se puede deshacer.`,
-      async () => {
-        await executeRemoveGenericRow(String(row.id), rowLabel);
-      },
-    );
-    return;
-  }
-
-  openDeleteDialog(
-    'Eliminar registro',
-    `Se eliminara ${rowLabel}. Esta accion no se puede deshacer.`,
-    async () => {
-      await executeRemoveGenericRow(String(row.id), rowLabel);
-    },
-  );
+  modal.open = true;
 }
 
-async function executeRemoveGenericRow(id: string, rowLabel: string) {
-  if (!activeModuleKey.value || activeModuleKey.value === 'cuentas-clientes')
-    return;
-
-  const moduleKey = activeModuleKey.value as GenericModuleKey;
-
-  if (moduleKey === 'inventario') {
-    inventarioLoadError.value = '';
-    try {
-      await deleteInventario(id);
-      await loadInventarioRows();
-      showSuccess(`Item de inventario ${rowLabel} eliminado correctamente.`);
-    } catch (error) {
-      const message = toErrorMessage(
-        error,
-        'No se pudo eliminar item de inventario.',
-      );
-      inventarioLoadError.value = message;
-      showError(message);
-      throw error;
-    }
-    return;
-  }
-
-  if (moduleKey === 'personal-campo') {
-    tecnicosLoadError.value = '';
-    try {
-      await deleteTecnico(id);
-      await loadTecnicosRows();
-      showSuccess(`Tecnico ${rowLabel} eliminado correctamente.`);
-    } catch (error) {
-      const message = toErrorMessage(error, 'No se pudo eliminar tecnico.');
-      tecnicosLoadError.value = message;
-      showError(message);
-      throw error;
-    }
-    return;
-  }
-
-  if (moduleKey === 'pedidos') {
-    pedidosLoadError.value = '';
-    try {
-      await darBajaPedido(id);
-      await loadPedidosRows();
-      showSuccess(`Pedido ${rowLabel} dado de baja correctamente.`);
-    } catch (error) {
-      const message = toErrorMessage(
-        error,
-        'No se pudo dar de baja el pedido.',
-      );
-      pedidosLoadError.value = message;
-      showError(message);
-      throw error;
-    }
-    return;
-  }
-
-  genericRows[moduleKey] = genericRows[moduleKey].filter(
-    (row) => row.id !== id,
-  );
-  showSuccess(`Registro ${rowLabel} eliminado en vista local.`);
-}
-
-function resetClienteForm() {
-  clienteForm.id = '';
-  clienteForm.nombre = '';
-  clienteForm.ruc = '';
-  clienteForm.contacto = '';
-  clienteForm.estado = 'Activo';
-}
-
-function resetCuentaForm() {
-  cuentaForm.id = '';
-  cuentaForm.codigo = '';
-  cuentaForm.nombre = '';
-  cuentaForm.direccion = '';
-  cuentaForm.distrito = '';
-  cuentaForm.latitud = '';
-  cuentaForm.longitud = '';
-  cuentaForm.contacto = '';
-  cuentaForm.telefono = '';
-  cuentaForm.estado = 'Activa';
-}
-
-function startCreateCliente() {
-  clienteFormMode.value = 'create';
-  clienteEditingId.value = null;
-  resetClienteForm();
-  cuentasClientesView.value = 'cliente-form';
-}
-
-function startEditCliente(cliente: ClienteItem) {
-  clienteFormMode.value = 'edit';
-  clienteEditingId.value = cliente.id;
-  clienteForm.id = cliente.id;
-  clienteForm.nombre = cliente.nombre;
-  clienteForm.ruc = cliente.ruc;
-  clienteForm.contacto = cliente.contacto;
-  clienteForm.estado = cliente.estado;
-  cuentasClientesView.value = 'cliente-form';
-}
-
-function askRemoveClient(cliente: ClienteItem) {
-  openDeleteDialog(
-    'Eliminar cliente',
-    `Se eliminara ${cliente.nombre} y sus cuentas asociadas. Esta accion no se puede deshacer.`,
-    async () => {
-      await executeRemoveClient(cliente.id, cliente.nombre);
-    },
-  );
-}
-
-async function executeRemoveClient(id: string, nombre: string) {
-  clientesCuentasLoadError.value = '';
+// ── Guardar ────────────────────────────────────────────────────────────────
+async function saveInv() {
+  modal.saving = true;
+  modal.error = '';
   try {
-    await deleteCliente(id);
-    await loadClientesCuentasRows();
-    showSuccess(`Cliente ${nombre} eliminado correctamente.`);
-
-    if (cuentaTargetClienteId.value === id) {
-      goToClientesList();
+    if (modal.mode === 'create') {
+      const item = await createInventario({ ...invForm });
+      inventario.value.unshift(item);
+    } else {
+      const item = await updateInventario(modal.editId, { ...invForm });
+      const idx = inventario.value.findIndex(i => i.id === modal.editId);
+      if (idx >= 0) inventario.value[idx] = item;
     }
-  } catch (error) {
-    const message = toErrorMessage(
-      error,
-      'No se pudo eliminar cliente en backend.',
-    );
-    clientesCuentasLoadError.value = message;
-    showError(message);
-    throw error;
+    modal.open = false;
+    showToast('success', 'Ítem guardado correctamente.');
+  } catch (e: unknown) {
+    modal.error = e instanceof Error ? e.message : 'Error al guardar';
+  } finally {
+    modal.saving = false;
   }
 }
 
-function startCreateCuenta(clienteId: string) {
-  cuentaFormMode.value = 'create';
-  cuentaEditingId.value = null;
-  cuentaTargetClienteId.value = clienteId;
-  resetCuentaForm();
-  cuentasClientesView.value = 'cuenta-form';
-}
-
-function startEditCuenta(clienteId: string, cuenta: CuentaItem) {
-  cuentaFormMode.value = 'edit';
-  cuentaEditingId.value = cuenta.id;
-  cuentaTargetClienteId.value = clienteId;
-  cuentaForm.id = cuenta.id;
-  cuentaForm.codigo = cuenta.codigo;
-  cuentaForm.nombre = cuenta.nombre;
-  cuentaForm.direccion = cuenta.direccion;
-  cuentaForm.distrito = cuenta.distrito;
-  cuentaForm.latitud = cuenta.latitud;
-  cuentaForm.longitud = cuenta.longitud;
-  cuentaForm.contacto = cuenta.contacto;
-  cuentaForm.telefono = cuenta.telefono;
-  cuentaForm.estado = cuenta.estado;
-  cuentasClientesView.value = 'cuenta-form';
-}
-
-function askRemoveCuenta(clienteId: string, cuenta: CuentaItem) {
-  const cuentaLabel = `${cuenta.codigo} - ${cuenta.nombre}`;
-  openDeleteDialog(
-    'Eliminar cuenta',
-    `Se eliminara ${cuentaLabel}. Esta accion no se puede deshacer.`,
-    async () => {
-      await executeRemoveCuenta(clienteId, cuenta.id, cuentaLabel);
-    },
-  );
-}
-
-async function executeRemoveCuenta(
-  clienteId: string,
-  id: string,
-  cuentaLabel: string,
-) {
-  clientesCuentasLoadError.value = '';
+async function saveCli() {
+  modal.saving = true;
+  modal.error = '';
   try {
-    await deleteCuenta(id);
-    await loadClientesCuentasRows();
-    showSuccess(`Cuenta ${cuentaLabel} eliminada correctamente.`);
-  } catch (error) {
-    const message = toErrorMessage(
-      error,
-      'No se pudo eliminar cuenta en backend.',
-    );
-    clientesCuentasLoadError.value = message;
-    showError(message);
-    throw error;
-  }
-
-  if (
-    cuentaTargetClienteId.value === clienteId &&
-    cuentaEditingId.value === id
-  ) {
-    goToClientesList();
-  }
-}
-
-async function saveClienteForm() {
-  clientesCuentasLoadError.value = '';
-  const isCreate = clienteFormMode.value === 'create';
-
-  const payload = {
-    nombre: clienteForm.nombre.trim(),
-    documento: clienteForm.ruc.trim(),
-    telefono: clienteForm.contacto.trim(),
-    activo: clienteForm.estado === 'Activo',
-  };
-
-  try {
-    if (clienteFormMode.value === 'create') {
-      await createCliente({
-        ...payload,
-        correo: '',
-        direccion: '',
-      });
-    } else if (clienteEditingId.value) {
-      await updateCliente(clienteEditingId.value, payload);
+    if (modal.mode === 'create') {
+      const c = await createCliente({ ...cliForm });
+      clientes.value.unshift(c);
+    } else {
+      const c = await updateCliente(modal.editId, { ...cliForm });
+      const idx = clientes.value.findIndex(x => x.id === modal.editId);
+      if (idx >= 0) clientes.value[idx] = c;
     }
-
-    await loadClientesCuentasRows();
-    goToClientesList();
-    showSuccess(
-      isCreate
-        ? 'Cliente creado correctamente.'
-        : 'Cliente actualizado correctamente.',
-    );
-  } catch (error) {
-    const message = toErrorMessage(
-      error,
-      'No se pudo guardar cliente en backend.',
-    );
-    clientesCuentasLoadError.value = message;
-    showError(message);
+    modal.open = false;
+    showToast('success', 'Cliente guardado.');
+  } catch (e: unknown) {
+    modal.error = e instanceof Error ? e.message : 'Error al guardar';
+  } finally {
+    modal.saving = false;
   }
 }
 
-async function saveCuentaForm() {
-  if (!cuentaTargetClienteId.value) return;
-
-  clientesCuentasLoadError.value = '';
-  const isCreate = cuentaFormMode.value === 'create';
-  const latitud = parseCoordinate(cuentaForm.latitud, -90, 90);
-  const longitud = parseCoordinate(cuentaForm.longitud, -180, 180);
-
-  if (latitud === null || longitud === null) {
-    const message =
-      'Coordenadas invalidas. Usa latitud [-90, 90] y longitud [-180, 180].';
-    clientesCuentasLoadError.value = message;
-    showError(message);
-    return;
-  }
-
-  const payload = {
-    cliente: cuentaTargetClienteId.value,
-    numero: cuentaForm.codigo.trim(),
-    nombre: cuentaForm.nombre.trim(),
-    direccion: cuentaForm.direccion.trim(),
-    distrito: cuentaForm.distrito.trim(),
-    latitud,
-    longitud,
-    contacto: cuentaForm.contacto.trim(),
-    telefono: cuentaForm.telefono.trim(),
-    activa: parseEstadoActivo(cuentaForm.estado, true),
-  };
-
+async function saveCuenta() {
+  modal.saving = true;
+  modal.error = '';
   try {
-    if (cuentaFormMode.value === 'create') {
-      await createCuenta({
-        ...payload,
-        tipo: 'otro',
-      });
-    } else if (cuentaEditingId.value) {
-      await updateCuenta(cuentaEditingId.value, payload);
+    if (modal.mode === 'create') {
+      const c = await createCuenta({ ...cuentaForm });
+      cuentas.value.push(c);
+    } else {
+      const c = await updateCuenta(modal.editId, { ...cuentaForm });
+      const idx = cuentas.value.findIndex(x => x.id === modal.editId);
+      if (idx >= 0) cuentas.value[idx] = c;
     }
-
-    await loadClientesCuentasRows();
-    goToClientesList();
-    showSuccess(
-      isCreate
-        ? 'Cuenta creada correctamente.'
-        : 'Cuenta actualizada correctamente.',
-    );
-  } catch (error) {
-    const message = toErrorMessage(
-      error,
-      'No se pudo guardar cuenta en backend.',
-    );
-    clientesCuentasLoadError.value = message;
-    showError(message);
+    modal.open = false;
+    showToast('success', 'Cuenta guardada.');
+  } catch (e: unknown) {
+    modal.error = e instanceof Error ? e.message : 'Error al guardar';
+  } finally {
+    modal.saving = false;
   }
 }
 
-function getClientAccounts(clienteId: string) {
-  return cuentasByCliente[clienteId] || [];
+async function saveTec() {
+  modal.saving = true;
+  modal.error = '';
+  try {
+    if (modal.mode === 'create') {
+      const t = await createTecnico({ ...tecForm });
+      tecnicos.value.unshift(t);
+    } else {
+      const t = await updateTecnico(modal.editId, { ...tecForm });
+      const idx = tecnicos.value.findIndex(x => x.id === modal.editId);
+      if (idx >= 0) tecnicos.value[idx] = t;
+    }
+    modal.open = false;
+    showToast('success', 'Técnico guardado.');
+  } catch (e: unknown) {
+    modal.error = e instanceof Error ? e.message : 'Error al guardar';
+  } finally {
+    modal.saving = false;
+  }
 }
 
-function getFilteredAccountsForClient(cliente: ClienteItem) {
-  const accounts = getClientAccounts(cliente.id);
-  const query = clientSearch.value.trim().toLowerCase();
-  if (!query) return accounts;
+async function saveUsr() {
+  modal.saving = true;
+  modal.error = '';
+  try {
+    const payload: Record<string, unknown> = {
+      username: usrForm.username,
+      nombre_completo: usrForm.nombre_completo,
+      email: usrForm.email,
+      rol: usrForm.rol,
+      privilegio: usrForm.privilegio || null,
+      activo: usrForm.activo,
+    };
+    if (usrForm.password) payload.password = usrForm.password;
 
-  const matchesCliente = [
-    cliente.nombre,
-    cliente.ruc,
-    cliente.contacto,
-    cliente.estado,
-  ]
-    .join(' ')
-    .toLowerCase()
-    .includes(query);
-
-  if (matchesCliente) return accounts;
-
-  return accounts.filter((cuenta) =>
-    [
-      cuenta.codigo,
-      cuenta.nombre,
-      cuenta.direccion,
-      cuenta.distrito,
-      cuenta.latitud,
-      cuenta.longitud,
-      cuenta.contacto,
-      cuenta.telefono,
-      cuenta.estado,
-    ]
-      .join(' ')
-      .toLowerCase()
-      .includes(query),
-  );
+    if (modal.mode === 'create') {
+      if (!usrForm.password) { modal.error = 'La contraseña es obligatoria.'; modal.saving = false; return; }
+      const u = await createUsuario(payload as Parameters<typeof createUsuario>[0]);
+      usuarios.value.unshift(u);
+    } else {
+      const u = await updateUsuario(modal.editId, payload as Partial<ApiUsuario & { password?: string }>);
+      const idx = usuarios.value.findIndex(x => x.id === modal.editId);
+      if (idx >= 0) usuarios.value[idx] = u;
+    }
+    modal.open = false;
+    showToast('success', 'Usuario guardado.');
+  } catch (e: unknown) {
+    modal.error = e instanceof Error ? e.message : 'Error al guardar';
+  } finally {
+    modal.saving = false;
+  }
 }
 
-function goToClientesList() {
-  cuentasClientesView.value = 'list';
-  clienteFormMode.value = 'create';
-  cuentaFormMode.value = 'create';
-  clienteEditingId.value = null;
-  cuentaEditingId.value = null;
-  cuentaTargetClienteId.value = null;
-  resetClienteForm();
-  resetCuentaForm();
+// ── Eliminar ───────────────────────────────────────────────────────────────
+function confirmDelete(entity: string, id: string, name: string) {
+  Object.assign(delModal, { open: true, entity, id, name, loading: false, error: '' });
 }
 
-function cancelEdit() {
-  isEditing.value = false;
-  editingId.value = null;
-  editEntity.value = 'generic';
-  resetGenericForm();
-  resetClienteForm();
-  resetCuentaForm();
+async function doDelete() {
+  delModal.loading = true;
+  delModal.error = '';
+  try {
+    switch (delModal.entity) {
+      case 'inv': await deleteInventario(delModal.id); inventario.value = inventario.value.filter(i => i.id !== delModal.id); break;
+      case 'cliente': await deleteCliente(delModal.id); clientes.value = clientes.value.filter(c => c.id !== delModal.id); break;
+      case 'cuenta': await deleteCuenta(delModal.id); cuentas.value = cuentas.value.filter(c => c.id !== delModal.id); break;
+      case 'tec': await deleteTecnico(delModal.id); tecnicos.value = tecnicos.value.filter(t => t.id !== delModal.id); break;
+      case 'usr': await deleteUsuario(delModal.id); usuarios.value = usuarios.value.filter(u => u.id !== delModal.id); break;
+    }
+    delModal.open = false;
+    showToast('success', 'Registro eliminado.');
+  } catch (e: unknown) {
+    delModal.error = e instanceof Error ? e.message : 'Error al eliminar';
+  } finally {
+    delModal.loading = false;
+  }
 }
-
-onMounted(() => {
-  void Promise.all([
-    loadPedidosRows(),
-    loadClientesCuentasRows(),
-    loadInventarioRows(),
-    loadTecnicosRows(),
-  ]);
-});
-
-onBeforeUnmount(() => {
-  clearFeedbackTimer();
-});
 </script>
 
 <style scoped>
-.base-view {
-  --bg-main: var(--color-surface);
-  --bg-soft: var(--color-surface-2);
-  --bg-soft-2: var(--color-surface-alt);
-  --text-main: var(--color-text);
-  --text-muted: var(--color-text-muted);
-  --border: var(--color-border);
-  --border-strong: var(--color-primary-500);
-  --radius: 4px;
-
-  display: grid;
-  gap: 10px;
-  min-height: calc(100dvh - 24px);
-  grid-template-rows: 54px minmax(0, 1fr);
-}
-
-.card {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: linear-gradient(180deg, var(--color-surface-2) 0%, var(--bg-main) 100%);
-}
-
-.crud-toast {
-  position: fixed;
-  right: 14px;
-  bottom: 14px;
-  width: min(360px, calc(100vw - 24px));
-  border-radius: var(--radius);
-  border: 1px solid var(--color-border);
-  padding: 10px 12px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  z-index: 20;
-  box-shadow: 0 14px 34px rgba(2, 10, 18, 0.44);
-}
-
-.crud-toast.is-success {
-  background: linear-gradient(160deg, rgba(6, 78, 59, 0.88), rgba(15, 118, 110, 0.75));
-  border-color: rgba(52, 211, 153, 0.8);
-}
-
-.crud-toast.is-error {
-  background: linear-gradient(160deg, rgba(127, 29, 29, 0.92), rgba(153, 27, 27, 0.72));
-  border-color: rgba(252, 165, 165, 0.8);
-}
-
-.feedback-copy {
-  display: grid;
-  gap: 2px;
-}
-
-.feedback-copy strong {
-  color: var(--color-surface-2);
-  font-size: 0.82rem;
-}
-
-.feedback-copy span {
-  color: var(--color-text-soft);
-  font-size: 0.78rem;
-}
-
-.feedback-close {
-  border: 1px solid rgba(203, 213, 225, 0.4);
-  border-radius: var(--radius);
-  background: rgba(15, 23, 42, 0.45);
-  color: var(--color-text-soft);
-  font-size: 0.74rem;
-  padding: 5px 8px;
-  cursor: pointer;
-}
-
-.toast-fade-enter-active,
-.toast-fade-leave-active {
-  transition: opacity 0.2s ease, transform 0.2s ease;
-}
-
-.toast-fade-enter-from,
-.toast-fade-leave-to {
-  opacity: 0;
-  transform: translateY(8px);
-}
-
-.base-head,
-.crud-head {
-  height: 54px;
-  min-height: 54px;
-  max-height: 54px;
-  padding: 6px 12px;
-  display: flex;
-  align-items: center;
-}
-
-.crud-head {
-  justify-content: space-between;
-  gap: 10px;
-}
-
-h2,
-h3,
-p {
-  margin: 0;
-}
-
-h2,
-h3 {
-  color: var(--text-main);
-}
-
-p,
-small {
-  color: var(--text-muted);
-}
-
-.cards-grid {
-  display: grid;
-  gap: 14px;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 300px));
-  justify-content: center;
-  align-content: start;
-  padding-top: 10px;
-}
-
-.module-card {
-  width: 100%;
-  height: 204px;
-  min-height: 204px;
-  max-height: 204px;
-  padding: 14px;
-  text-align: left;
-  display: grid;
-  gap: 8px;
-  grid-template-rows: auto auto auto 1fr;
-  cursor: pointer;
-  transition: border-color 0.2s ease, transform 0.2s ease;
-  box-shadow: 0 10px 24px rgba(2, 10, 18, 0.28);
-}
-
-.module-card:hover {
-  border-color: var(--border-strong);
-  transform: translateY(-2px);
-}
-
-.module-top {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.module-top h3 {
-  font-size: 1.06rem;
-  font-weight: 700;
-}
-
-.inventory-highlight {
-  font-size: 1.28rem;
-  font-weight: 900;
-  letter-spacing: 0.04em;
-  color: var(--color-surface-2);
-}
-
-.module-top span {
-  border: 1px solid var(--color-text-muted);
-  border-radius: 3px;
-  padding: 2px 8px;
-  color: var(--color-text-muted);
-  font-size: 0.74rem;
-}
-
-.open-link {
-  margin-top: 2px;
-  padding-top: 8px;
-  border-top: 1px solid rgba(220, 232, 245, 0.2);
-  color: var(--color-text-soft);
-  font-size: 0.8rem;
-  align-self: end;
-}
-
-.crud-shell {
-  display: grid;
-  gap: 10px;
-  grid-template-rows: auto minmax(0, 1fr);
-  padding: 10px;
-  overflow: hidden;
-}
-
-.clientes-stack {
-  min-height: 0;
-  display: grid;
-  gap: 10px;
-  overflow: auto;
-  align-content: start;
-}
-
-.panel {
-  border: 1px solid rgba(220, 232, 245, 0.2);
-  background: rgba(9, 19, 31, 0.5);
-  border-radius: var(--radius);
-  padding: 10px;
-  display: grid;
-  gap: 8px;
-  min-height: 0;
-}
-
-.toolbar-panel {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.toolbar-inline-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.load-warning {
-  color: #fecaca;
-  border-color: rgba(239, 68, 68, 0.55);
-  background: rgba(70, 18, 18, 0.45);
-}
-
-.clients-toolbar {
-  align-items: flex-start;
-}
-
-.toolbar-copy {
-  display: grid;
-  gap: 4px;
-}
-
-.toolbar-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: min(100%, 760px);
-}
-
-.toolbar-actions .search {
-  flex: 1;
-}
-
-.panel-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
-}
-
-.search,
-input,
-select {
-  background: var(--color-surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  color: var(--color-text);
-  padding: 8px 10px;
-  font: inherit;
-}
-
-.search {
-  width: 100%;
-}
-
-.btn {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 7px 10px;
-  cursor: pointer;
-  font-size: 0.8rem;
-  font-weight: 600;
-}
-
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.btn.primary {
-  background: linear-gradient(120deg, #16a34a, #059669);
-  border-color: #79e3c3;
-  color: #f4fff8;
-}
-
-.btn.ghost {
-  background: var(--bg-soft);
-  color: var(--color-text-soft);
-}
-
-.btn.mini {
-  padding: 5px 8px;
-  font-size: 0.74rem;
-  background: var(--bg-soft-2);
-  color: var(--color-text-soft);
-}
-
-.btn.danger {
-  border-color: #ef4444;
-  color: #fecaca;
-}
-
-.btn.danger.solid {
-  background: linear-gradient(160deg, rgba(185, 28, 28, 0.9), rgba(220, 38, 38, 0.75));
-  color: #fff1f2;
-}
-
-.cliente-card {
-  gap: 12px;
-  background: linear-gradient(160deg, rgba(15, 32, 50, 0.88), rgba(10, 22, 35, 0.95));
-}
-
-.cliente-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 8px;
-}
-
-.cliente-head p {
-  margin-top: 4px;
-}
-
-.status-badge {
-  border-radius: 999px;
-  border: 1px solid var(--color-border);
-  padding: 4px 10px;
-  font-size: 0.74rem;
-  font-weight: 700;
-}
-
-.status-badge.active {
-  color: #baf6dc;
-  border-color: #2f8f65;
-  background: rgba(16, 185, 129, 0.12);
-}
-
-.status-badge.inactive {
-  color: #f6d0d0;
-  border-color: #a05a5a;
-  background: rgba(239, 68, 68, 0.12);
-}
-
-.cliente-meta {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-  font-size: 0.86rem;
-}
-
-.cliente-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.cuentas-section {
-  border-top: 1px solid rgba(220, 232, 245, 0.2);
-  padding-top: 10px;
-  display: grid;
-  gap: 10px;
-}
-
-.cuentas-head h4 {
-  margin: 0;
-  color: var(--color-text-soft);
-  font-size: 0.9rem;
-}
-
-.cuentas-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-  gap: 8px;
-}
-
-.cuenta-card {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  background: rgba(10, 21, 33, 0.85);
-  padding: 10px;
-  display: grid;
-  gap: 8px;
-}
-
-.cuenta-top {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  align-items: center;
-}
-
-.cuenta-top span {
-  border-radius: 3px;
-  border: 1px solid var(--color-border);
-  color: var(--color-text-muted);
-  font-size: 0.72rem;
-  padding: 2px 7px;
-}
-
-.cuenta-address {
-  color: var(--color-text-muted);
-  font-size: 0.85rem;
-}
-
-.cuenta-meta {
-  display: grid;
-  gap: 3px;
-  color: var(--color-text-muted);
-  font-size: 0.78rem;
-}
-
-.state-pill {
-  width: fit-content;
-  border-radius: 999px;
-  padding: 3px 8px;
-  border: 1px solid var(--color-border);
-  font-weight: 700;
-}
-
-.state-pill.ok {
-  color: #baf6dc;
-  border-color: #2f8f65;
-  background: rgba(16, 185, 129, 0.12);
-}
-
-.state-pill.warn {
-  color: #fde8b9;
-  border-color: #a27226;
-  background: rgba(245, 158, 11, 0.14);
-}
-
-.cuenta-actions {
-  display: flex;
-  gap: 6px;
-}
-
-.empty-cuentas,
-.empty-clients {
-  display: grid;
-  gap: 8px;
-  place-items: start;
-}
-
-.standalone-form {
-  max-width: 980px;
-  width: 100%;
-  justify-self: center;
-}
-
-.form-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 10px;
-}
-
-.table-wrap {
-  overflow: auto;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: rgba(10, 21, 34, 0.65);
-  min-height: 0;
-}
-
-table {
-  width: 100%;
-  min-width: 680px;
-  border-collapse: collapse;
-}
-
-th,
-td {
-  padding: 8px;
-  border-bottom: 1px solid var(--color-border);
-  text-align: left;
-  color: var(--color-text-soft);
-}
-
-th {
-  color: var(--color-text-soft);
-  font-weight: 600;
-  background: rgba(19, 38, 59, 0.5);
-}
-
-.actions {
-  width: 156px;
-}
-
-.action-buttons {
-  display: flex;
-  gap: 6px;
-}
-
-.row-clickable {
-  cursor: pointer;
-}
-
-.row-clickable.selected {
-  background: rgba(32, 86, 132, 0.25);
-}
-
-.empty-row {
-  text-align: center;
-  color: var(--color-text-muted);
-}
-
-.editor {
-  padding: 10px;
-  display: grid;
-  gap: 10px;
-}
-
-.editor-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-
-label {
-  display: grid;
-  gap: 4px;
-}
-
-label span {
-  color: var(--color-text-muted);
-  font-size: 0.78rem;
-}
-
-.editor-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.delete-modal-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(2, 6, 23, 0.66);
-  display: grid;
-  place-items: center;
-  z-index: 12;
-  padding: 12px;
-}
-
-.delete-modal {
-  width: min(430px, 100%);
-  padding: 14px;
-  display: grid;
-  gap: 12px;
-}
-
-.delete-modal-head {
-  display: grid;
-  gap: 6px;
-}
-
-.delete-modal-head p {
-  color: var(--color-text-soft);
-}
-
-.delete-modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-@media (max-width: 1200px) {
-  .cards-grid {
-    grid-template-columns: repeat(auto-fit, minmax(240px, 280px));
-  }
-
-  .module-card {
-    height: 190px;
-    min-height: 190px;
-    max-height: 190px;
-  }
-
-  .editor-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 920px) {
-  .cliente-meta {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 780px) {
-  .cards-grid,
-  .editor-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .module-card {
-    max-width: 100%;
-    height: 178px;
-    min-height: 178px;
-    max-height: 178px;
-  }
-
-  .crud-head,
-  .toolbar-panel,
-  .panel-head,
-  .toolbar-actions,
-  .form-head,
-  .delete-modal-actions {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .cuentas-grid {
-    grid-template-columns: 1fr;
-  }
-}
+.bd-view { display: flex; flex-direction: column; gap: 1rem; height: 100%; }
+
+/* Toast */
+.bd-toast { position: fixed; top: 1rem; right: 1rem; z-index: 2000; display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem 1rem; border-radius: 0.5rem; font-size: 0.85rem; box-shadow: 0 4px 20px rgba(0,0,0,0.3); }
+.bd-toast.success { background: #15803d; color: #dcfce7; }
+.bd-toast.error { background: #991b1b; color: #fee2e2; }
+.bd-toast button { background: none; border: none; color: inherit; cursor: pointer; opacity: 0.7; font-size: 1rem; }
+.toast-fade-enter-active, .toast-fade-leave-active { transition: all 0.3s; }
+.toast-fade-enter-from, .toast-fade-leave-to { opacity: 0; transform: translateY(-1rem); }
+
+/* Header */
+.bd-header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 1.5rem; background: var(--surface, #1e293b); border-radius: 0.75rem; flex-wrap: wrap; gap: 0.5rem; }
+.bd-header h2 { margin: 0; font-size: 1.25rem; color: var(--text-primary, #f1f5f9); }
+.bd-header p { margin: 0; font-size: 0.8rem; color: var(--text-muted, #94a3b8); }
+.header-actions { display: flex; gap: 0.5rem; }
+
+/* Modules grid */
+.modules-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 1rem; }
+.module-card { background: var(--surface, #1e293b); border: 1px solid var(--border, #334155); border-radius: 0.75rem; padding: 1.25rem; display: flex; align-items: center; gap: 1rem; cursor: pointer; text-align: left; transition: all 0.15s; }
+.module-card:hover { border-color: #6366f1; transform: translateY(-2px); }
+.module-icon { font-size: 2rem; flex-shrink: 0; }
+.module-info { flex: 1; }
+.module-info strong { display: block; font-size: 0.95rem; color: var(--text-primary, #f1f5f9); margin-bottom: 0.2rem; }
+.module-info p { margin: 0; font-size: 0.78rem; color: var(--text-muted, #94a3b8); }
+.module-arrow { color: var(--text-muted, #94a3b8); font-size: 1.2rem; }
+
+/* Table card */
+.bd-table-card { background: var(--surface, #1e293b); border-radius: 0.75rem; padding: 1rem; display: flex; flex-direction: column; gap: 0.75rem; flex: 1; overflow: hidden; }
+.table-toolbar { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.bd-search { padding: 0.45rem 0.75rem; border: 1px solid var(--border, #334155); border-radius: 0.4rem; background: var(--bg, #0f172a); color: var(--text-primary, #f1f5f9); font-size: 0.8rem; flex: 1; min-width: 160px; }
+.bd-select { padding: 0.45rem 0.5rem; border: 1px solid var(--border, #334155); border-radius: 0.4rem; background: var(--bg, #0f172a); color: var(--text-primary, #f1f5f9); font-size: 0.8rem; }
+.bd-loading { color: var(--text-muted, #94a3b8); font-size: 0.85rem; padding: 1rem; }
+.bd-empty { color: var(--text-muted, #94a3b8); font-size: 0.85rem; padding: 1rem; text-align: center; }
+
+.bd-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+.bd-table th { padding: 0.5rem 0.75rem; text-align: left; color: var(--text-muted, #94a3b8); font-weight: 600; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 1px solid var(--border, #334155); }
+.bd-table td { padding: 0.55rem 0.75rem; color: var(--text-secondary, #cbd5e1); border-bottom: 1px solid rgba(51,65,85,0.5); }
+.bd-table tr:hover td { background: rgba(255,255,255,0.02); }
+.bd-table tr.row-low td:first-child { border-left: 2px solid #ef4444; }
+.td-empty { text-align: center; color: var(--text-muted, #94a3b8); padding: 2rem !important; }
+.td-actions { display: flex; gap: 0.3rem; justify-content: flex-end; }
+.text-danger { color: #f87171; }
+
+/* Badges */
+.cat-badge { font-size: 0.7rem; padding: 0.15rem 0.5rem; border-radius: 999px; font-weight: 600; }
+.cat-epp { background: rgba(168,85,247,0.2); color: #d8b4fe; }
+.cat-material { background: rgba(59,130,246,0.2); color: #93c5fd; }
+.cat-herramienta { background: rgba(234,179,8,0.2); color: #fbbf24; }
+.cat-otro { background: rgba(100,116,139,0.2); color: #94a3b8; }
+
+.rol-badge { font-size: 0.7rem; padding: 0.15rem 0.5rem; border-radius: 999px; font-weight: 600; }
+.rol-admin { background: rgba(239,68,68,0.2); color: #fca5a5; }
+.rol-coordinador { background: rgba(99,102,241,0.2); color: #a5b4fc; }
+.rol-tecnico { background: rgba(34,197,94,0.2); color: #86efac; }
+
+.status-dot { font-size: 0.75rem; display: flex; align-items: center; gap: 0.3rem; }
+.status-dot::before { content: ''; width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.dot-green::before { background: #4ade80; }
+.dot-gray::before { background: #94a3b8; }
+
+.num-pill { background: rgba(99,102,241,0.2); color: #a5b4fc; padding: 0.15rem 0.5rem; border-radius: 999px; font-size: 0.75rem; font-weight: 700; }
+
+/* Clientes / Cuentas */
+.bd-cc { background: var(--surface, #1e293b); border-radius: 0.75rem; padding: 1rem; display: flex; flex-direction: column; gap: 0.75rem; flex: 1; overflow-y: auto; }
+.bd-cc-header { display: flex; gap: 0.5rem; align-items: center; }
+.clientes-list { display: flex; flex-direction: column; gap: 0.75rem; }
+.cli-card { background: var(--bg, #0f172a); border-radius: 0.5rem; border: 1px solid var(--border, #334155); overflow: hidden; }
+.cli-head { display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1rem; flex-wrap: wrap; gap: 0.5rem; }
+.cli-head strong { display: block; font-size: 0.9rem; color: var(--text-primary, #f1f5f9); }
+.cli-head small { font-size: 0.75rem; color: var(--text-muted, #94a3b8); }
+.cli-actions { display: flex; gap: 0.3rem; }
+.cli-info { display: flex; gap: 1rem; padding: 0 1rem 0.5rem; font-size: 0.75rem; color: var(--text-muted, #94a3b8); flex-wrap: wrap; }
+.cuentas-list { border-top: 1px solid var(--border, #334155); }
+.cuenta-empty { padding: 0.5rem 1rem; font-size: 0.75rem; color: var(--text-muted, #94a3b8); }
+.cuenta-item { display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 1rem; border-bottom: 1px solid rgba(51,65,85,0.5); }
+.cuenta-info { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.cuenta-num { font-size: 0.72rem; background: rgba(99,102,241,0.15); color: #a5b4fc; padding: 0.1rem 0.4rem; border-radius: 0.25rem; font-weight: 600; }
+.cuenta-info strong { font-size: 0.82rem; color: var(--text-primary, #f1f5f9); }
+.cuenta-info small { font-size: 0.72rem; color: var(--text-muted, #94a3b8); }
+.cuenta-actions { display: flex; gap: 0.3rem; }
+
+/* Buttons */
+.btn-primary { padding: 0.5rem 1rem; background: #6366f1; color: #fff; border: none; border-radius: 0.4rem; cursor: pointer; font-size: 0.85rem; font-weight: 600; }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-ghost { padding: 0.5rem 1rem; background: transparent; color: var(--text-secondary, #cbd5e1); border: 1px solid var(--border, #334155); border-radius: 0.4rem; cursor: pointer; font-size: 0.85rem; }
+.btn-danger { padding: 0.5rem 1rem; background: #dc2626; color: #fff; border: none; border-radius: 0.4rem; cursor: pointer; font-size: 0.85rem; font-weight: 600; }
+.btn-danger:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-icon { width: 28px; height: 28px; border: 1px solid var(--border, #334155); border-radius: 0.35rem; background: transparent; color: var(--text-secondary, #cbd5e1); cursor: pointer; font-size: 0.85rem; display: inline-flex; align-items: center; justify-content: center; }
+.btn-icon:hover { border-color: #6366f1; color: #a5b4fc; }
+.btn-icon.danger:hover { border-color: #ef4444; color: #f87171; }
+.btn-sm { padding: 0.25rem 0.6rem; background: rgba(99,102,241,0.15); color: #a5b4fc; border: 1px solid rgba(99,102,241,0.3); border-radius: 0.35rem; cursor: pointer; font-size: 0.75rem; white-space: nowrap; }
+
+/* Modal */
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 1rem; }
+.modal { background: var(--surface, #1e293b); border-radius: 0.75rem; padding: 1.5rem; width: 520px; max-width: 100%; max-height: 90vh; overflow-y: auto; display: flex; flex-direction: column; gap: 0.75rem; }
+.modal-sm { width: 380px; }
+.modal-head { display: flex; justify-content: space-between; align-items: center; }
+.modal-head h3 { margin: 0; font-size: 1rem; color: var(--text-primary, #f1f5f9); }
+.modal-close { background: none; border: none; color: var(--text-muted, #94a3b8); cursor: pointer; font-size: 1.1rem; }
+.modal h3 { margin: 0; color: var(--text-primary, #f1f5f9); }
+.modal p { margin: 0; font-size: 0.85rem; color: var(--text-secondary, #cbd5e1); }
+
+.modal-form { display: flex; flex-direction: column; gap: 0.65rem; }
+.modal-form label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.8rem; color: var(--text-muted, #94a3b8); }
+.modal-form input, .modal-form select, .modal-form textarea { padding: 0.5rem 0.65rem; border: 1px solid var(--border, #334155); border-radius: 0.4rem; background: var(--bg, #0f172a); color: var(--text-primary, #f1f5f9); font-size: 0.85rem; font-family: inherit; }
+.modal-form textarea { resize: vertical; }
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.65rem; }
+.form-error { color: #f87171; font-size: 0.8rem; margin: 0; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.25rem; }
 </style>

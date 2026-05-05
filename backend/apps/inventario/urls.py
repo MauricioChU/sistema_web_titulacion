@@ -1,8 +1,7 @@
-from rest_framework.routers import DefaultRouter
+from django.urls import path
+from .views import InventarioListView, InventarioDetailView
 
-from .views import ItemInventarioViewSet
-
-router = DefaultRouter()
-router.register("inventario", ItemInventarioViewSet, basename="inventario")
-
-urlpatterns = router.urls
+urlpatterns = [
+    path("", InventarioListView.as_view(), name="inventario-list"),
+    path("<str:pk>/", InventarioDetailView.as_view(), name="inventario-detail"),
+]

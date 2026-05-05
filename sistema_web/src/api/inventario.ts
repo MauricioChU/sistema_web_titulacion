@@ -1,78 +1,36 @@
-import {
-  apiRequest,
-  type PaginatedResponse,
-  unwrapList,
-  withQuery,
-} from './http';
+import { apiRequest, withQuery } from './http';
 
 export interface ApiInventario {
   id: string;
   sku: string;
+  nombre: string;
   descripcion: string;
-  categoria: string;
-  stock: number;
+  categoria: 'epp' | 'material' | 'herramienta' | 'otro';
+  stock_disponible: number;
   stock_minimo: number;
-  unidad_medida: string;
-  almacen: string;
+  unidad: string;
+  precio_unitario: number;
   activo: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
-export async function listInventario(
-  options: { search?: string; activo?: boolean } = {},
-) {
-  const path = withQuery('/inventario/', {
-    search: options.search,
-    activo: options.activo,
-  });
-  const payload = await apiRequest<
-    ApiInventario[] | PaginatedResponse<ApiInventario>
-  >(path);
-  return unwrapList(payload);
+export function listInventario(params: { search?: string; categoria?: string; activo?: boolean } = {}): Promise<ApiInventario[]> {
+  return apiRequest<ApiInventario[]>(withQuery('/inventario/', params as Record<string, string | boolean>));
 }
 
-export function createInventario(payload: {
-  sku: string;
-  descripcion: string;
-  categoria: string;
-  stock: number;
-  stock_minimo?: number;
-  unidad_medida?: string;
-  almacen?: string;
-  activo?: boolean;
-}) {
-  return apiRequest<ApiInventario>('/inventario/', {
-    method: 'POST',
-    body: {
-      stock_minimo: 0,
-      unidad_medida: 'unidad',
-      almacen: 'principal',
-      activo: true,
-      ...payload,
-    },
-  });
+export function getInventario(id: string): Promise<ApiInventario> {
+  return apiRequest<ApiInventario>(`/inventario/${id}/`);
 }
 
-export function updateInventario(
-  itemId: string,
-  payload: Partial<{
-    sku: string;
-    descripcion: string;
-    categoria: string;
-    stock: number;
-    stock_minimo: number;
-    unidad_medida: string;
-    almacen: string;
-    activo: boolean;
-  }>,
-) {
-  return apiRequest<ApiInventario>(`/inventario/${itemId}/`, {
-    method: 'PATCH',
-    body: payload,
-  });
+export function createInventario(data: Partial<ApiInventario>): Promise<ApiInventario> {
+  return apiRequest<ApiInventario>('/inventario/', { method: 'POST', body: data });
 }
 
-export function deleteInventario(itemId: string) {
-  return apiRequest<void>(`/inventario/${itemId}/`, {
-    method: 'DELETE',
-  });
+export function updateInventario(id: string, data: Partial<ApiInventario>): Promise<ApiInventario> {
+  return apiRequest<ApiInventario>(`/inventario/${id}/`, { method: 'PUT', body: data });
+}
+
+export function deleteInventario(id: string): Promise<void> {
+  return apiRequest<void>(`/inventario/${id}/`, { method: 'DELETE' });
 }
